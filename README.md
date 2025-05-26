@@ -88,6 +88,13 @@ store.zip("models", pattern="*.pt")  # Only PyTorch files
 store.zip("models", source_path="models", pattern="*.pt")  # Only PyTorch files from a source subdirectory
 store.unzip("backup.zip")  # Unzips backup.zip into the current data directory
 store.unzip("backup.zip", output_dir=store.data_dir / "extracted")  # Unzips to a specified directory
+
+# Load environment variables from a .env file
+from pathlib import Path
+from autostore import load_dotenv, config
+load_dotenv()  # Load environment variables from .env file
+DATA_DIR = config("DATA_DIR", default="./data", cast=Path)  # Access loaded environment variable
+store = AutoStore(DATA_DIR)  # Use the loaded path in AutoStore
 ```
 
 ## Extending AutoStore
@@ -155,4 +162,5 @@ Don't choose AutoStore when:
 
 ## Changes
 
+-   0.1.1 - Added config, setup_logging, and load_dotenv
 -   0.1.0 - Initial release

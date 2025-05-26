@@ -145,13 +145,20 @@ Don't choose AutoStore when:
 
 Changes
 -------
+0.1.1 - Added config, setup_logging, and load_dotenv
 0.1.0 - Initial release
 """
 
+import io
+import re
 import os
+import sys
 import json
 import pickle
+import codecs
+import logging
 import zipfile
+import contextlib
 import typing as t
 from pathlib import Path
 from fnmatch import fnmatch
@@ -1106,3 +1113,248 @@ class AutoStore:
         finally:
             if delete_zip and zip_path.exists():
                 zip_path.unlink()
+
+
+def config(key: str, cast: t.Callable = None, default: t.Any = None) -> t.Any:
+    """
+    Get a configuration value from environment variables.
+
+    Args:
+        key (str): Environment variable name.
+        cast (Callable): Type to cast the value to.
+        default (Any): Default value if the environment variable is not found.
+
+    Example:
+
+        Read an environment variable:
+
+        ```python
+        from pypertext import config
+
+        DEBUG = config("DEBUG", cast=bool, default=False)
+        ```
+    """
+    if key in os.environ:
+        value = os.environ[key]
+        if cast is None or value is None:
+            return value
+        elif cast is bool and isinstance(value, str):
+            mapping = {"true": True, "1": True, "false": False, "0": False}
+            value = value.lower()
+            if value not in mapping:
+                raise ValueError(f"Config '{key}' has value '{value}'. Not a valid bool.")
+            return mapping[value]
+        try:
+            return cast(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"Config '{key}' has value '{value}'. Not a valid {cast.__name__}.")
+
+    try:
+        return cast(default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _walk_to_root(path: str) -> t.Iterator[str]:
+    """
+    Yield directories starting from the given directory up to the root
+    """
+    if not os.path.exists(path):
+        raise IOError("Starting path not found")
+
+    if os.path.isfile(path):
+        path = os.path.dirname(path)
+
+    last_dir = None
+    current_dir = os.path.abspath(path)
+    while last_dir != current_dir:
+        yield current_dir
+        parent_dir = os.path.abspath(os.path.join(current_dir, os.path.pardir))
+        last_dir, current_dir = current_dir, parent_dir
+
+
+def find_dotenv(filename: str = ".env", raise_error_if_not_found: bool = False, usecwd: bool = False) -> str:
+    """
+    Search in increasingly higher folders for the given file. Returns path to the file if found, or an empty
+    string otherwise.
+
+    Args:
+        filename (str): The name of the file to search for. Defaults to ".env".
+        raise_error_if_not_found (bool): If True, raises an IOError if the file is not found. Defaults to False.
+        usecwd (bool): If True, uses the current working directory as the starting point for the search. Defaults to False.
+
+    Returns:
+        str: The path to the file if found, or an empty string if not found.
+    """
+
+    def _is_interactive():
+        """Decide whether this is running in a REPL or IPython notebook"""
+        try:
+            main = __import__("__main__", None, None, fromlist=["__file__"])
+        except ModuleNotFoundError:
+            return False
+        return not hasattr(main, "__file__")
+
+    if usecwd or _is_interactive() or getattr(sys, "frozen", False):
+        # Should work without __file__, e.g. in REPL or IPython notebook.
+        path = os.getcwd()
+    else:
+        # will work for .py files
+        frame = sys._getframe()
+        current_file = __file__
+
+        while frame.f_back is not None and (
+            frame.f_code.co_filename == current_file or not os.path.exists(frame.f_code.co_filename)
+        ):
+            frame = frame.f_back
+        frame_filename = frame.f_code.co_filename
+        path = os.path.dirname(os.path.abspath(frame_filename))
+
+    for dirname in _walk_to_root(path):
+        check_path = os.path.join(dirname, filename)
+        if os.path.isfile(check_path):
+            return check_path
+
+    if raise_error_if_not_found:
+        raise IOError("File not found")
+
+    return ""
+
+
+def load_dotenv(dotenv_path: str = None, override: bool = True, encoding: str = "utf-8") -> None:
+    """
+    Load environment variables from a .env file into os.environ.
+
+    Args:
+        dotenv_path (str): Path to the .env file. If not provided, will default to searching for .env in the current
+            directory and all parent directories.
+        override (bool): Whether to override existing environment variables.
+        encoding (str): The encoding of the .env file. Defaults to 'utf-8'.
+
+    Example:
+        Load environment variables from a .env file:
+
+        ```python
+        from pypertext import load_dotenv
+
+        load_dotenv()  # Load from the default .env file in the current directory
+        load_dotenv("config.env")  # Load from a specific file
+        ```
+    """
+    if dotenv_path is None:
+        dotenv_path = find_dotenv()
+
+    envvars = {}
+
+    _whitespace = re.compile(r"[^\S\r\n]*", flags=re.UNICODE)
+    _export = re.compile(r"(?:export[^\S\r\n]+)?", flags=re.UNICODE)
+    _single_quoted_key = re.compile(r"'([^']+)'", flags=re.UNICODE)
+    _unquoted_key = re.compile(r"([^=\#\s]+)", flags=re.UNICODE)
+    _single_quoted_value = re.compile(r"'((?:\\'|[^'])*)'", flags=re.UNICODE)
+    _double_quoted_value = re.compile(r'"((?:\\"|[^"])*)"', flags=re.UNICODE)
+    _unquoted_value = re.compile(r"([^\r\n]*)", flags=re.UNICODE)
+    _double_quote_escapes = re.compile(r"\\[\\'\"abfnrtv]", flags=re.UNICODE)
+    _single_quote_escapes = re.compile(r"\\[\\']", flags=re.UNICODE)
+
+    @contextlib.contextmanager
+    def _get_stream() -> t.Iterator[t.IO[str]]:
+        if dotenv_path and os.path.isfile(dotenv_path):
+            with open(dotenv_path, encoding=encoding) as stream:
+                yield stream
+        else:
+            yield io.StringIO("")
+
+    _double_quote_map = {
+        r"\\": "\\",
+        r"\'": "'",
+        r"\"": '"',
+        r"\a": "\a",
+        r"\b": "\b",
+        r"\f": "\f",
+        r"\n": "\n",
+        r"\r": "\r",
+        r"\t": "\t",
+        r"\v": "\v",
+    }
+
+    def _double_quote_escape(m: t.Match[str]) -> str:
+        return _double_quote_map[m.group()]
+
+    nexport = len("export ")
+    with _get_stream() as stream:
+        for line in stream:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[nexport:]
+            key, value = line.split("=", 1)
+            key = key.strip()
+            key = _single_quoted_key.sub(r"\1", key)
+            key = _unquoted_key.sub(r"\1", key)
+            key = _whitespace.sub("", key)
+            key = _export.sub("", key)
+            key = key.strip()
+            if not key:
+                continue
+
+            if _single_quoted_value.match(value):
+                value = _single_quoted_value.sub(r"\1", value)
+                value = _single_quote_escapes.sub(r"\1", value)
+            elif _double_quoted_value.match(value):
+                value = _double_quoted_value.sub(r"\1", value)
+                value = codecs.decode(value.encode("utf-8"), "unicode_escape")
+            elif _unquoted_value.match(value):
+                value = _unquoted_value.sub(r"\1", value)
+                value = _double_quote_escapes.sub(_double_quote_escape, value)
+                value = _whitespace.sub("", value)
+            else:
+                raise ValueError(f"Line {line} does not match format KEY=VALUE")
+            envvars[key] = value
+
+    for k, v in envvars.items():
+        if k in os.environ and not override:
+            continue
+        if v is not None:
+            os.environ[k] = v
+
+
+def setup_logging(level: int = None, file: str = None, disable_stdout: bool = False):
+    """Setup logging.
+
+    Args:
+        level (int, optional): The logging level. Defaults to logging.INFO.
+        file (str, optional): The path to the log file. Defaults to None.
+        disable_stdout (bool, optional): Whether to disable stdout logging. Defaults to False.
+
+    Example:
+
+        Setup logging to a file and disable stdout logging:
+
+        ```python
+        import logging
+        from pypertext import setup_logging
+
+        setup_logging(level=logging.DEBUG)
+        setup_logging(file="logs/app.log", disable_stdout=True)
+        setup_logging(level="DEBUG", file="logs/app.log", disable_stdout=True)
+        ```
+    """
+    if level is None:
+        level = logging.INFO
+    if isinstance(level, str):
+        level = getattr(logging, level.upper())
+    if file is None and disable_stdout:
+        return
+    handlers = []
+    if not disable_stdout:
+        handlers.append(logging.StreamHandler())
+    if file is not None:
+        os.makedirs(os.path.dirname(file), exist_ok=True)
+        handlers.append(logging.FileHandler(file))
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s|%(levelname)s|%(name)s|%(message)s",
+        handlers=handlers,
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
