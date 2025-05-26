@@ -794,16 +794,16 @@ class AutoStore:
         >>> store["features.parquet"]  # Returns a LazyFrame
         >>> store["features"]  # Omit the file extension
         >>> store["models/version_1/model.pt"]  # Nested directory, loads torch model weights
-        >>> print(list(ds.keys()))  # All available keys, with and without extensions
-        >>> print(list(ds.iter_files()))  # All files with extensions
+        >>> print(list(store.keys()))  # All available keys, with and without extensions
+        >>> print(list(store.iter_files()))  # All files with extensions
         >>> del store["old_experiment"]  # Delete a file
         >>> "features" in ds  # Check if a file exists
         >>> store.zip("backup")  # Zips data directory to ../backup.zip
-        >>> store.zip("models", output_dir=ds.data_dir / "zips")  # Zips models directory into an output directory
+        >>> store.zip("models", output_dir=store.data_dir / "zips")  # Zips models directory into an output directory
         >>> store.zip("models", pattern="*.pt")  # Only PyTorch files
         >>> store.zip("models", source_path="models", pattern="*.pt")  # Only PyTorch files from a source subdirectory
         >>> store.unzip("backup.zip")  # Unzips backup.zip into the current data directory
-        >>> store.unzip("backup.zip", output_dir=ds.data_dir / "extracted")  # Unzips to a specified directory
+        >>> store.unzip("backup.zip", output_dir=store.data_dir / "extracted")  # Unzips to a specified directory
     """
 
     def __init__(self, data_dir: Path):

@@ -16,7 +16,7 @@ provides a clean, intuitive API for data persistence.
 
 ## Getting Started
 
-AutoStore requires Python 3.10+ and can be installed via pip:
+AutoStore requires Python 3.10+ and can be installed via pip.
 
 ```bash
 pip install autostore
@@ -54,30 +54,18 @@ Supported Data Types Out of the Box
 | YAML data                  | `.yaml`, `.yml`      | Human-readable config files |
 | Any Python object          | `.pkl`               | Pickle fallback             |
 
-## When to Use AutoStore
-
--   Data science projects with mixed file types
--   Configuration management across different formats
--   Rapid prototyping where you don't want to think about file formats
--   Building data pipelines with heterogeneous data
--   Projects that need to support multiple serialization formats
--   Consistent data access patterns across projects
--   Easy extensibility for custom data types
--   Reduced boilerplate code for file I/O
--   Automatic best-practice file format selection
-
 ## Quick Start
 
 ```python
 from pathlib import Path
 from autostore import AutoStore
 
-# Create a data shelf
+# Create a store instance
 store = AutoStore(Path("./my_data"))
 
 # Save different types of data
 store["users"] = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]  # → users.jsonl
-store["config"] = {"api_key": "secret", "debug": True}                   # → config.json
+store["config"] = {"batch_size": 32, "debug": True}                      # → config.json
 store["model_weights"] = torch.randn(100, 50)                            # → model_weights.pt
 store["features"] = pl.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})       # → features.parquet
 
@@ -88,13 +76,18 @@ weights = store["model_weights"] # Loads from model_weights.pt
 df = store["features"]           # Loads from features.parquet
 
 # File operations
-print(list(ds.keys()))        # List all available data
-"config" in ds                # Check if data exists
-del store["old_data"]            # Delete data
+"config" in ds                   # Check if a file exists
+del store["old_data"]            # Delete a file
+list(ds.keys())                  # List all available file names (with and without extensions)
+list(ds.iter_files())            # Iterate over all files (with extensions)
 
 # Archive operations
-store.zip("backup")              # Create backup.zip
-store.unzip("backup.zip")        # Extract archive
+store.zip("backup")  # Zips data directory to ../backup.zip
+store.zip("models", output_dir=store.data_dir / "zips")  # Zips models directory into an output directory
+store.zip("models", pattern="*.pt")  # Only PyTorch files
+store.zip("models", source_path="models", pattern="*.pt")  # Only PyTorch files from a source subdirectory
+store.unzip("backup.zip")  # Unzips backup.zip into the current data directory
+store.unzip("backup.zip", output_dir=store.data_dir / "extracted")  # Unzips to a specified directory
 ```
 
 ## Extending AutoStore
@@ -129,22 +122,25 @@ class CustomHandler(DataHandler):
 store.register_handler(CustomHandler())
 ```
 
-## When to Choose AutoStore
+## When to Use AutoStore
 
 Choose AutoStore when you need:
 
--   Multiple file formats with automatic selection
--   Data science workflow optimization
--   Extensibility for custom data types
+-   Data science projects with mixed file types
+-   Building data pipelines with heterogeneous data
+-   Rapid prototyping where you don't want to think about file formats
+-   Consistent data access patterns across projects
+-   Easy extensibility for custom data types
+-   Reduced boilerplate code for file I/O
 -   Simple dictionary-like interface for complex storage needs
 
 Don't choose AutoStore when:
 
 -   You need complex queries (use TinyDB)
--   Performance is absolutely critical (use DiskCache)
+-   Performance is critical (use DiskCache)
 -   You need zero dependencies (use Shelve)
 -   You only work with one data type consistently
--   You need advanced caching features (use Klepto)
+-   You need advanced caching features
 
 | Feature                   | AutoStore           | Shelve         | DiskCache      | TinyDB          | PickleDB     | SQLiteDict     | Klepto         |
 | ------------------------- | ------------------- | -------------- | -------------- | --------------- | ------------ | -------------- | -------------- |
