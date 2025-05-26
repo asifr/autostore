@@ -20,6 +20,7 @@ dependencies = ['importlib-metadata; python_version<"3.10"']
 # Dev dependencies
 [project.optional-dependencies]
 dev = ["ruff", "ipykernel", "pytest", "nbformat"]
+test = ["boto3", "botocore", "polars", "torch", "numpy", "scipy"]
 
 # Read the version from the package
 [tool.setuptools.dynamic]

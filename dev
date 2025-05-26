@@ -5,7 +5,6 @@
 
 set -e
 
-export DOCKER_UID=$UID
 
 ERROR='\033[0;31m'
 SUCCESS='\033[0;32m'
@@ -92,7 +91,7 @@ defhelp setup_venv 'Set up Python virtual environment.'
 cmd_setup() {
     echo "Installing package..."
 	cmd_setup_venv
-	source .venv/bin/activate; uv pip install -e .[dev]
+	source .venv/bin/activate; uv pip install -e .[dev,test]
 }
 defhelp setup 'Set up Python virtual environment.'
 
