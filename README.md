@@ -1,18 +1,19 @@
 # AutoStore - File Storage Made Simple
 
-AutoStore provides a dictionary-like interface for reading and writing files.
-AutoStore eliminates the cognitive overhead of managing different file formats, letting you focus on your data and
-analysis rather than the mechanics of file I/O. It automatically handles file format detection, type inference, and
-provides a clean, intuitive API for data persistence.
+AutoStore provides a dictionary-like interface for reading and writing files with caching and different storage backends.
+
+AutoStore eliminates the cognitive overhead of managing different file formats, letting you focus on your data and analysis rather than the mechanics of file I/O. It automatically handles file format detection, type inference, upload/download operations, and provides a clean, intuitive API for data persistence across local and cloud storage.
 
 ## Why Use AutoStore?
 
--   Simplicity: Store and retrieve data with dictionary syntax. No need to remember APIs for different file formats.
--   Type Detection: Automatically infers the best file format based on the data type.
--   Multiple Data Types: Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more.
--   Extensible Architecture: Pluggable handler system for new data types without modifying core code.
--   Flexible File Management: Works with nested directories, supports pattern matching, and automatic file discovery.
--   Built-in Archiving: Create and extract zip archives.
+-   **Simplicity**: Store and retrieve data with dictionary syntax. No need to remember APIs for different file formats.
+-   **Caching**: Caching system with configurable expiration reduces redundant downloads, especially for cloud storage.
+-   **Multiple Storage Backends**: Seamlessly work with local files, S3, and other cloud storage services.
+-   **Type Detection**: Automatically infers the best file format based on the data type.
+-   **Multiple Data Types**: Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more.
+-   **Extensible Architecture**: Pluggable handler system for new data types and storage backends.
+-   **Performance Optimized**: Upload/download operations with efficient handling of large files.
+-   **Type-Safe Configuration**: Dataclass-based configuration with IDE support and validation.
 
 ## Getting Started
 
@@ -22,146 +23,267 @@ AutoStore requires Python 3.10+ and can be installed via pip.
 pip install autostore
 ```
 
+### Basic Usage
+
 ```python
-from autostore import AutoStore
+from autostore import AutoStore, LocalFileConfig
+
 store = AutoStore("./data")
 
-# Write data
+# Write data - automatically saves with appropriate extensions
 store["my_dataframe"] = df           # Automatically saves as .parquet
 store["config"] = {"key": "value"}   # Automatically saves as .json
 store["logs"] = [{"event": "start"}] # Automatically saves as .jsonl
 
-# Read data
+# Read data - uses cache when available
 df = store["my_dataframe"]           # Loads and returns the DataFrame
 config = store["config"]             # Loads and returns the config dict
 logs = store["logs"]                 # Loads and returns the list of logs
 ```
 
-Supported Data Types Out of the Box
-
-| Data Type                  | File Extension       | Description                 |
-| -------------------------- | -------------------- | --------------------------- |
-| Polars DataFrame/LazyFrame | `.parquet`, `.csv`   | High-performance DataFrames |
-| Python dict/list           | `.json`              | Standard JSON serialization |
-| List of dicts              | `.jsonl`             | JSON Lines format           |
-| Pydantic models            | `.pydantic.json`     | Structured data models      |
-| Python dataclasses         | `.dataclass.json`    | Dataclass serialization     |
-| String data                | `.txt`, `.html`      | Plain text files            |
-| NumPy arrays               | `.npy`, `.npz`       | Numerical data              |
-| SciPy sparse matrices      | `.sparse`            | Sparse matrix data          |
-| PyTorch tensors/models     | `.pt`, `.pth`        | Deep learning models        |
-| PIL/Pillow images          | `.png`, `.jpg`, etc. | Image data                  |
-| YAML data                  | `.yaml`, `.yml`      | Human-readable config files |
-| Any Python object          | `.pkl`               | Pickle fallback             |
-
-## Quick Start
+### Cloud Storage (S3)
 
 ```python
-from pathlib import Path
 from autostore import AutoStore
+from autostore.s3 import S3Backend, S3StorageConfig
 
-# Create a store instance
-store = AutoStore(Path("./my_data"))
+# Register S3 backend
+AutoStore.register_backend("s3", S3Backend)
 
-# Save different types of data
-store["users"] = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]  # → users.jsonl
-store["config"] = {"batch_size": 32, "debug": True}                      # → config.json
-store["model_weights"] = torch.randn(100, 50)                            # → model_weights.pt
-store["features"] = pl.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})       # → features.parquet
+# Configure S3 with caching
+s3_config = S3StorageConfig(
+    region_name="us-east-1",
+    cache_enabled=True,
+    cache_expiry_hours=12,
+    multipart_threshold=64 * 1024 * 1024  # 64MB
+)
 
-# Load data back (format detection is automatic)
-users = store["users"]           # Loads from users.jsonl
-config = store["config"]         # Loads from config.json
-weights = store["model_weights"] # Loads from model_weights.pt
-df = store["features"]           # Loads from features.parquet
-
-# File operations
-"config" in ds                   # Check if a file exists
-del store["old_data"]            # Delete a file
-list(ds.keys())                  # List all available file names (with and without extensions)
-list(ds.iter_files())            # Iterate over all files (with extensions)
-
-# Archive operations
-store.zip("backup")  # Zips data directory to ../backup.zip
-store.zip("models", output_dir=store.data_dir / "zips")  # Zips models directory into an output directory
-store.zip("models", pattern="*.pt")  # Only PyTorch files
-store.zip("models", source_path="models", pattern="*.pt")  # Only PyTorch files from a source subdirectory
-store.unzip("backup.zip")  # Unzips backup.zip into the current data directory
-store.unzip("backup.zip", output_dir=store.data_dir / "extracted")  # Unzips to a specified directory
-
-# Load environment variables from a .env file
-from pathlib import Path
-from autostore import load_dotenv, config
-load_dotenv()  # Load environment variables from .env file
-DATA_DIR = config("DATA_DIR", default="./data", cast=Path)  # Access loaded environment variable
-store = AutoStore(DATA_DIR)  # Use the loaded path in AutoStore
+# Use S3 storage
+store = AutoStore("s3://my-bucket/data/", config=s3_config)
+store["experiment/results"] = {"accuracy": 0.95, "epochs": 100}
+results = store["experiment/results"]  # Uses cache on subsequent loads
 ```
 
-## Extending AutoStore
+## Supported Data Types
+
+| Data Type                  | File Extension         | Description                 | Library Required |
+| -------------------------- | ---------------------- | --------------------------- | ---------------- |
+| Polars DataFrame/LazyFrame | `.parquet`, `.csv`     | High-performance DataFrames | polars           |
+| Python dict/list           | `.json`                | Standard JSON serialization | built-in         |
+| List of dicts              | `.jsonl`               | JSON Lines format           | built-in         |
+| Pydantic models            | `.pydantic.json`       | Structured data models      | pydantic         |
+| Python dataclasses         | `.dataclass.json`      | Dataclass serialization     | built-in         |
+| String data                | `.txt`, `.html`, `.md` | Plain text files            | built-in         |
+| NumPy arrays               | `.npy`, `.npz`         | Numerical data              | numpy            |
+| SciPy sparse matrices      | `.sparse`              | Sparse matrix data          | scipy            |
+| PyTorch tensors/models     | `.pt`, `.pth`          | Deep learning models        | torch            |
+| PIL/Pillow images          | `.png`, `.jpg`, etc.   | Image data                  | Pillow           |
+| YAML data                  | `.yaml`, `.yml`        | Human-readable config files | PyYAML           |
+| Any Python object          | `.pkl`                 | Pickle fallback             | built-in         |
+
+## Configuration Options
+
+### S3StorageConfig
+
+```python
+from s3 import S3StorageConfig
+
+config = S3StorageConfig(
+    aws_access_key_id="your-key",
+    aws_secret_access_key="your-secret",
+    region_name="us-east-1",
+    cache_enabled=True,
+    cache_expiry_hours=12,
+    multipart_threshold=64 * 1024 * 1024,  # Files larger than this use multipart upload
+    multipart_chunksize=16 * 1024 * 1024,  # Chunk size for multipart uploads
+    max_concurrency=10                     # Maximum concurrent uploads/downloads
+)
+```
+
+## Advanced Features
+
+### Caching System
+
+AutoStore includes an intelligent caching system that:
+
+-   Stores frequently accessed files locally
+-   Uses ETags for cache validation
+-   Automatically expires old cache entries
+-   Significantly improves performance for cloud storage
+
+```python
+# Cache management
+store.cleanup_cache()  # Remove expired cache entries
+
+# Check cache status
+metadata = store.get_metadata("large_file")
+print(f"File size: {metadata.size} bytes")
+print(f"ETag: {metadata.etag}")
+```
+
+### Custom Data Handlers
 
 Add support for new data types by creating custom handlers:
 
 ```python
-class CustomHandler(DataHandler):
+from autostore import DataHandler
+from pathlib import Path
+
+class CustomLogHandler(DataHandler):
     def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() == ".custom"
+        return extension.lower() == ".log"
 
-    def can_handle_data(self, data: Any) -> bool:
-        return isinstance(data, MyCustomType)
+    def can_handle_data(self, data) -> bool:
+        return isinstance(data, list) and all(
+            isinstance(item, dict) and "timestamp" in item
+            for item in data
+        )
 
-    def read(self, file_path: Path) -> Any:
-        # Custom loading logic
-        pass
+    def read_from_file(self, file_path: Path, file_extension: str):
+        logs = []
+        with open(file_path, 'r') as f:
+            for line in f:
+                if line.strip():
+                    logs.append(json.loads(line))
+        return logs
 
-    def write(self, data: Any, file_path: Path) -> None:
-        # Custom saving logic
-        pass
+    def write_to_file(self, data, file_path: Path, file_extension: str):
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, 'w') as f:
+            for entry in data:
+                f.write(json.dumps(entry) + '\n')
 
     @property
-    def extensions(self) -> List[str]:
-        return [".custom"]
+    def extensions(self):
+        return [".log"]
 
     @property
-    def priority(self) -> int:
-        return 10  # Higher priority means it will be tried first
+    def priority(self):
+        return 15
 
 # Register the handler
-store.register_handler(CustomHandler())
+store.register_handler(CustomLogHandler())
 ```
+
+### File Operations
+
+```python
+# Check existence
+if "config" in store:
+    print("Config file exists")
+
+# List all files
+for key in store.keys():
+    print(f"File: {key}")
+
+# Get file metadata
+metadata = store.get_metadata("large_dataset")
+print(f"Size: {metadata.size} bytes")
+print(f"Modified: {metadata.modified_time}")
+
+# Copy and move files
+store.copy("original", "backup")
+store.move("temp_file", "permanent_file")
+
+# Delete files
+del store["old_data"]
+```
+
+### Context Management
+
+```python
+# Automatic cleanup of temporary files and cache
+with AutoStore("./data", config=config) as store:
+    store["data"] = large_dataset
+    results = store["data"]
+# Temporary files are automatically cleaned up here
+```
+
+## Multiple Storage Backends
+
+AutoStore supports pluggable storage backends:
+
+```python
+# Local storage
+local_store = AutoStore("./data")
+
+# S3 storage
+s3_store = AutoStore("s3://bucket/prefix/")
+
+# Future backends (when implemented)
+# gcs_store = AutoStore("gcs://bucket/prefix/")
+# azure_store = AutoStore("azure://container/prefix/")
+```
+
+## Performance Considerations
+
+### Caching Benefits
+
+For cloud storage (especially S3), caching provides significant performance improvements:
+
+```python
+# First access - downloads from S3
+data = store["large_dataset"]  # ~2.5 seconds
+
+# Subsequent access - loads from cache
+data = store["large_dataset"]  # ~0.1 seconds (25x faster!)
+```
+
+### Large File Handling
+
+AutoStore automatically optimizes for large files:
+
+-   Multipart uploads/downloads for files > 64MB
+-   Configurable chunk sizes and concurrency
+-   Streaming operations to minimize memory usage
 
 ## When to Use AutoStore
 
 Choose AutoStore when you need:
 
--   Data science projects with mixed file types
--   Building data pipelines with heterogeneous data
--   Rapid prototyping where you don't want to think about file formats
--   Consistent data access patterns across projects
--   Easy extensibility for custom data types
--   Reduced boilerplate code for file I/O
--   Simple dictionary-like interface for complex storage needs
+-   **Data science projects** with mixed file types and cloud storage
+-   **Building data pipelines** with heterogeneous data sources
+-   **Rapid prototyping** where you don't want to think about file formats
+-   **Consistent data access patterns** across local and cloud environments
+-   **Performance optimization** through intelligent caching
+-   **Easy extensibility** for custom data types and storage backends
+-   **Type-safe configuration** with dataclass-based settings
 
 Don't choose AutoStore when:
 
--   You need complex queries (use TinyDB)
--   Performance is critical (use DiskCache)
--   You need zero dependencies (use Shelve)
+-   You need complex queries (use TinyDB or databases)
 -   You only work with one data type consistently
--   You need advanced caching features
+-   You need zero dependencies (use Shelve)
+-   You require advanced database features
 
-| Feature                   | AutoStore           | Shelve         | DiskCache      | TinyDB          | PickleDB     | SQLiteDict     | Klepto         |
-| ------------------------- | ------------------- | -------------- | -------------- | --------------- | ------------ | -------------- | -------------- |
-| **Multi-format Support**  | ✅ 12+ formats      | ❌ Pickle only | ❌ Pickle only | ❌ JSON only    | ❌ JSON only | ❌ Pickle only | ❌ Pickle only |
-| **Auto Format Detection** | ✅ Smart inference  | ❌ Manual      | ❌ Manual      | ❌ Manual       | ❌ Manual    | ❌ Manual      | ❌ Manual      |
-| **Extensibility**         | ✅ Handler system   | ❌ Limited     | ❌ Limited     | ✅ Middleware   | ❌ Limited   | ❌ Limited     | ✅ Keymaps     |
-| **Standard Library**      | ❌ External         | ✅ Built-in    | ❌ External    | ❌ External     | ❌ External  | ❌ External    | ❌ External    |
-| **Performance**           | 🔶 Variable         | 🔶 Medium      | ✅ Fast        | 🔶 Medium       | 🔶 Medium    | 🔶 Medium      | ✅ Fast        |
-| **Thread Safety**         | ⚠️ Format dependent | ⚠️ Limited     | ✅ Yes         | ❌ No           | ❌ No        | ✅ Yes         | ✅ Yes         |
-| **Query Capabilities**    | ❌ Key-only         | ❌ Key-only    | ❌ Key-only    | ✅ Rich queries | ❌ Key-only  | ❌ Key-only    | ❌ Key-only    |
-| **Data Science Focus**    | ✅ Strong           | ❌ Generic     | ❌ Caching     | ❌ Documents    | ❌ Generic   | ❌ Generic     | ✅ Scientific  |
+## Comparison with Alternatives
+
+| Feature                   | AutoStore           | Shelve         | DiskCache      | TinyDB        | PickleDB      | SQLiteDict     |
+| ------------------------- | ------------------- | -------------- | -------------- | ------------- | ------------- | -------------- |
+| **Multi-format Support**  | ✅ 12+ formats      | ❌ Pickle only | ❌ Pickle only | ❌ JSON only  | ❌ JSON only  | ❌ Pickle only |
+| **Auto Format Detection** | ✅ Smart inference  | ❌ Manual      | ❌ Manual      | ❌ Manual     | ❌ Manual     | ❌ Manual      |
+| **Cloud Storage**         | ✅ S3, extensible   | ❌ Local only  | ❌ Local only  | ❌ Local only | ❌ Local only | ❌ Local only  |
+| **Intelligent Caching**   | ✅ ETag-based       | ❌ None        | ✅ Advanced    | ❌ None       | ❌ None       | ❌ None        |
+| **Type-Safe Config**      | ✅ Dataclasses      | ❌ None        | ✅ Classes     | ❌ Dicts      | ❌ None       | ❌ None        |
+| **Large File Handling**   | ✅ Multipart        | ❌ Limited     | ✅ Good        | ❌ Limited    | ❌ Limited    | ❌ Limited     |
+| **Extensibility**         | ✅ Handler system   | ❌ Limited     | ❌ Limited     | ✅ Middleware | ❌ Limited    | ❌ Limited     |
+| **Performance**           | ✅ Cached/Optimized | 🔶 Medium      | ✅ Fast        | 🔶 Medium     | 🔶 Medium     | 🔶 Medium      |
+| **Standard Library**      | ❌ External         | ✅ Built-in    | ❌ External    | ❌ External   | ❌ External   | ❌ External    |
 
 ## Changes
 
+-   0.1.3
+    -   Refactored to use different storage backends including local file system and S3.
+    -   Implement S3 storage backend with basic operations
+    -   Added S3StorageConfig for configuration management.
+    -   Implemented S3Backend class for handling S3 interactions.
+    -   Included methods for file operations: upload, download, delete, copy, move, and list files.
+    -   Added support for directory-like structures in S3.
+    -   Implemented metadata retrieval for files.
+    -   Integrated error handling for common S3 exceptions.
+    -   Added support for multipart uploads and downloads.
+    -   Included utility functions for path parsing and glob pattern matching.
+    -   Calling store.keys() now only returns keys without extensions.
 -   0.1.2 - config, setup_logging, and load_dotenv are now imported at the module top level
 -   0.1.1 - Added config, setup_logging, and load_dotenv
 -   0.1.0 - Initial release

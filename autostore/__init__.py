@@ -1,3 +1,3 @@
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 from autostore.autostore import AutoStore, load_dotenv, config, setup_logging  # noqa: F401

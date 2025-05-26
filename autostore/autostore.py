@@ -1,169 +1,577 @@
 """
 AutoStore - File Storage Made Simple
 
-AutoStore is a Python library that provides a dictionary-like interface for reading and writing files.
-AutoStore eliminates the cognitive overhead of managing different file formats, letting you focus on your data and
-analysis rather than the mechanics of file I/O. It automatically handles file format detection, type inference, and
-provides a clean, intuitive API for data persistence.
-
-Why Use AutoStore?
-
-- Simplicity: Store and retrieve data with dictionary syntax. No need to remember APIs for different file formats.
-- Type Detection: Automatically infers the best file format based on the data type.
-- Multiple Data Types: Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more.
-- Extensible Architecture: Pluggable handler system for new data types without modifying core code.
-- Flexible File Management: Works with nested directories, supports pattern matching, and automatic file discovery.
-- Built-in Archiving: Create and extract zip archives.
-
-```python
-store = AutoStore("./data")
-store["my_dataframe"] = df           # Automatically saves as .parquet
-store["config"] = {"key": "value"}   # Automatically saves as .json
-store["logs"] = [{"event": "start"}] # Automatically saves as .jsonl
-df = store["my_dataframe"]           # Loads and returns the DataFrame
-```
-
-Supported Data Types Out of the Box
-
-| Data Type | File Extension | Description |
-|-----------|----------------|-------------|
-| Polars DataFrame/LazyFrame | `.parquet`, `.csv` | High-performance DataFrames |
-| Python dict/list | `.json` | Standard JSON serialization |
-| List of dicts | `.jsonl` | JSON Lines format |
-| Pydantic models | `.pydantic.json` | Structured data models |
-| Python dataclasses | `.dataclass.json` | Dataclass serialization |
-| String data | `.txt`, `.html` | Plain text files |
-| NumPy arrays | `.npy`, `.npz` | Numerical data |
-| SciPy sparse matrices | `.sparse` | Sparse matrix data |
-| PyTorch tensors/models | `.pt`, `.pth` | Deep learning models |
-| PIL/Pillow images | `.png`, `.jpg`, etc. | Image data |
-| YAML data | `.yaml`, `.yml` | Human-readable config files |
-| Any Python object | `.pkl` | Pickle fallback |
-
-## When to Use AutoStore
-
-- Data science projects with mixed file types
-- Configuration management across different formats
-- Rapid prototyping where you don't want to think about file formats
-- Building data pipelines with heterogeneous data
-- Projects that need to support multiple serialization formats
-- Consistent data access patterns across projects
-- Easy extensibility for custom data types
-- Reduced boilerplate code for file I/O
-- Automatic best-practice file format selection
-
-Quick Start
-
-```python
-from pathlib import Path
-from AutoStore import AutoStore
-
-# Create a data shelf
-store = AutoStore(Path("./my_data"))
-
-# Save different types of data
-store["users"] = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]  # → users.jsonl
-store["config"] = {"api_key": "secret", "debug": True}                   # → config.json
-store["model_weights"] = torch.randn(100, 50)                            # → model_weights.pt
-store["features"] = pl.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})       # → features.parquet
-
-# Load data back (format detection is automatic)
-users = store["users"]           # Loads from users.jsonl
-config = store["config"]         # Loads from config.json
-weights = store["model_weights"] # Loads from model_weights.pt
-df = store["features"]           # Loads from features.parquet
-
-# File operations
-print(list(ds.keys()))        # List all available data
-"config" in ds                # Check if data exists
-del store["old_data"]            # Delete data
-
-# Archive operations
-store.zip("backup")              # Create backup.zip
-store.unzip("backup.zip")        # Extract archive
-```
-
-Extending AutoStore
-
-Add support for new data types by creating custom handlers:
-
-```python
-class CustomHandler(DataHandler):
-    def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() == ".custom"
-
-    def can_handle_data(self, data: Any) -> bool:
-        return isinstance(data, MyCustomType)
-
-    def read(self, file_path: Path) -> Any:
-        # Custom loading logic
-        pass
-
-    def write(self, data: Any, file_path: Path) -> None:
-        # Custom saving logic
-        pass
-
-    @property
-    def extensions(self) -> List[str]:
-        return [".custom"]
-
-    @property
-    def priority(self) -> int:
-        return 10
-
-# Register the handler
-ds.register_handler(CustomHandler())
-```
-
-When to Choose AutoStore
-
-Choose AutoStore when you need:
-
-- Multiple file formats with automatic selection
-- Data science workflow optimization
-- Extensibility for custom data types
-- Simple dictionary-like interface for complex storage needs
-
-Don't choose AutoStore when:
-
-- You need complex queries (use TinyDB)
-- Performance is absolutely critical (use DiskCache)
-- You need zero dependencies (use Shelve)
-- You only work with one data type consistently
-- You need advanced caching features (use Klepto)
-
-| Feature | AutoStore | Shelve | DiskCache | TinyDB | PickleDB | SQLiteDict | Klepto |
-|---------|-----------|--------|-----------|--------|----------|------------|--------|
-| **Multi-format Support** | ✅ 12+ formats | ❌ Pickle only | ❌ Pickle only | ❌ JSON only | ❌ JSON only | ❌ Pickle only | ❌ Pickle only |
-| **Auto Format Detection** | ✅ Smart inference | ❌ Manual | ❌ Manual | ❌ Manual | ❌ Manual | ❌ Manual | ❌ Manual |
-| **Extensibility** | ✅ Handler system | ❌ Limited | ❌ Limited | ✅ Middleware | ❌ Limited | ❌ Limited | ✅ Keymaps |
-| **Standard Library** | ❌ External | ✅ Built-in | ❌ External | ❌ External | ❌ External | ❌ External | ❌ External |
-| **Performance** | 🔶 Variable | 🔶 Medium | ✅ Fast | 🔶 Medium | 🔶 Medium | 🔶 Medium | ✅ Fast |
-| **Thread Safety** | ⚠️ Format dependent | ⚠️ Limited | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ✅ Yes |
-| **Query Capabilities** | ❌ Key-only | ❌ Key-only | ❌ Key-only | ✅ Rich queries | ❌ Key-only | ❌ Key-only | ❌ Key-only |
-| **Data Science Focus** | ✅ Strong | ❌ Generic | ❌ Caching | ❌ Documents | ❌ Generic | ❌ Generic | ✅ Scientific |
+License: Apache License 2.0
 
 Changes
 -------
-0.1.2 - config, setup_logging, and load_dotenv are now imported at the module top level
-0.1.1 - Added config, setup_logging, and load_dotenv
-0.1.0 - Initial release
+- 0.1.3
+    - Refactored to use different storage backends including local file system and S3.
+    - Included methods for file operations: upload, download, delete, copy, move, and list files.
+    - Added support for directory-like structures in S3.
+    - Implemented metadata retrieval for files.
+    - Included utility functions for path parsing and glob pattern matching.
+    - Calling store.keys() now only returns keys without extensions.
+- 0.1.2 - config, setup_logging, and load_dotenv are now imported at the module top level
+- 0.1.1 - Added config, setup_logging, and load_dotenv
+- 0.1.0 - Initial release
 """
 
+import os
 import io
 import re
-import os
 import sys
 import json
-import pickle
 import codecs
+import pickle
+import shutil
+import xxhash
 import logging
-import zipfile
+import tempfile
 import contextlib
 import typing as t
 from pathlib import Path
-from fnmatch import fnmatch
+from urllib.parse import urlparse
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+
+CONTENT_TYPES = {
+    ".txt": "text/plain",
+    ".html": "text/html",
+    ".json": "application/json",
+    ".csv": "text/csv",
+    ".yaml": "application/x-yaml",
+    ".yml": "application/x-yaml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".parquet": "application/octet-stream",
+    ".pkl": "application/octet-stream",
+    ".pt": "application/octet-stream",
+    ".pth": "application/octet-stream",
+    ".gif": "image/gif",
+    ".pdf": "application/pdf",
+    ".zip": "application/zip",
+    ".npy": "application/octet-stream",
+    ".npz": "application/octet-stream",
+}
+
+log = logging.getLogger(__name__)
+
+
+def hash_obj(obj: str, seed: int = 123) -> str:
+    """Generate a non-cryptographic hash from a string."""
+    if isinstance(obj, (list, tuple)):
+        obj = "_".join(map(str, obj))
+    # Handle bytes and dicts
+    if isinstance(obj, bytes):
+        obj = obj.decode("utf-8", errors="ignore")
+    if isinstance(obj, dict):
+        obj = json.dumps(obj, sort_keys=True)
+    if not isinstance(obj, str):
+        logging.warning(f"Object {obj} cannot be serialized, using its ID for hashing.")
+        obj = str(id(obj))
+    return xxhash.xxh3_64_hexdigest(obj, seed=seed)
+
+
+@dataclass
+class FileMetadata:
+    """Metadata information for a file."""
+
+    size: int
+    modified_time: datetime
+    created_time: t.Optional[datetime] = None
+    content_type: t.Optional[str] = None
+    etag: t.Optional[str] = None
+    extra: t.Dict[str, t.Any] = field(default_factory=dict)
+
+
+@dataclass
+class StorageConfig:
+    """Base configuration for storage backends."""
+
+    timeout: int = 30
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    chunk_size: int = 8192
+    enable_compression: bool = False
+    cache_enabled: bool = False
+    cache_dir: t.Optional[str] = None
+    cache_expiry_hours: int = 24
+    temp_dir: t.Optional[str] = None
+    extra: t.Dict[str, t.Any] = field(default_factory=dict)
+
+
+@dataclass
+class CacheEntry:
+    """Cache entry metadata."""
+
+    file_path: Path
+    created_time: datetime
+    etag: t.Optional[str] = None
+    size: int = 0
+
+
+class StorageError(Exception):
+    """Base exception for storage operations."""
+
+    pass
+
+
+class StorageFileNotFoundError(StorageError):
+    """Raised when a file is not found."""
+
+    pass
+
+
+class StoragePermissionError(StorageError):
+    """Raised when access is denied."""
+
+    pass
+
+
+class StorageConnectionError(StorageError):
+    """Raised when connection to storage backend fails."""
+
+    pass
+
+
+class CacheManager:
+    """Manages file caching with expiration."""
+
+    def __init__(self, cache_dir: t.Optional[str] = None, expiry_hours: int = 24):
+        if cache_dir is None:
+            cache_dir = os.path.join(tempfile.gettempdir(), "autostore_cache")
+
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.expiry_hours = expiry_hours
+        self._cache_index: t.Dict[str, CacheEntry] = {}
+        self._temp_dir = None
+
+    def get_temp_dir(self) -> Path:
+        """Get temporary directory for intermediate files."""
+        if self._temp_dir is None:
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="autostore_temp_"))
+        return self._temp_dir
+
+    def _get_cache_key(self, backend_uri: str, file_path: str) -> str:
+        """Generate cache key from backend URI and file path."""
+        key_string = f"{backend_uri}:{file_path}"
+        return hash_obj(key_string)
+
+    def _is_expired(self, entry: CacheEntry) -> bool:
+        """Check if cache entry is expired."""
+        expiry_time = entry.created_time + timedelta(hours=self.expiry_hours)
+        return datetime.now() > expiry_time
+
+    def get_cached_file(self, backend_uri: str, file_path: str, etag: t.Optional[str] = None) -> t.Optional[Path]:
+        """Get cached file path if valid cache exists."""
+        cache_key = self._get_cache_key(backend_uri, file_path)
+
+        if cache_key not in self._cache_index:
+            return None
+
+        entry = self._cache_index[cache_key]
+
+        # Check if file still exists
+        if not entry.file_path.exists():
+            del self._cache_index[cache_key]
+            return None
+
+        # Check if expired
+        if self._is_expired(entry):
+            entry.file_path.unlink(missing_ok=True)
+            del self._cache_index[cache_key]
+            return None
+
+        # Check etag if provided
+        if etag and entry.etag and entry.etag != etag:
+            entry.file_path.unlink(missing_ok=True)
+            del self._cache_index[cache_key]
+            return None
+
+        return entry.file_path
+
+    def cache_file(self, backend_uri: str, file_path: str, local_file_path: Path, etag: t.Optional[str] = None) -> Path:
+        """Cache a file and return the cached path."""
+        cache_key = self._get_cache_key(backend_uri, file_path)
+        cached_file_path = self.cache_dir / f"{cache_key}_{local_file_path.name}"
+        log.debug(f"Caching file {local_file_path} to {cached_file_path}")
+
+        # Copy file to cache
+        shutil.copy2(local_file_path, cached_file_path)
+
+        # Update cache index
+        entry = CacheEntry(
+            file_path=cached_file_path, created_time=datetime.now(), etag=etag, size=cached_file_path.stat().st_size
+        )
+        self._cache_index[cache_key] = entry
+
+        return cached_file_path
+
+    def cleanup_temp(self):
+        """Clean up temporary directory."""
+        if self._temp_dir and self._temp_dir.exists():
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = None
+
+    def cleanup_expired(self):
+        """Clean up expired cache entries."""
+        expired_keys = []
+        for cache_key, entry in self._cache_index.items():
+            if self._is_expired(entry):
+                entry.file_path.unlink(missing_ok=True)
+                expired_keys.append(cache_key)
+
+        for key in expired_keys:
+            del self._cache_index[key]
+
+
+class StorageBackend(ABC):
+    """
+    Abstract base class for all storage backends.
+
+    Now uses upload/download operations with temporary files instead of read/write bytes.
+    """
+
+    def __init__(self, uri: str, config: StorageConfig):
+        """
+        Initialize the storage backend.
+
+        Args:
+            uri: Storage URI (e.g., 'file:///path', 's3://bucket/prefix')
+            config: Backend configuration
+        """
+        self.uri = uri
+        self.config = config
+        self._parsed_uri = urlparse(uri)
+        self._temp_dir = None
+
+        # Initialize cache manager if caching is enabled
+        self.cache_manager: CacheManager = None
+        if config.cache_enabled:
+            self.cache_manager: CacheManager = CacheManager(
+                cache_dir=config.cache_dir,
+                expiry_hours=config.cache_expiry_hours,
+            )
+
+    def get_temp_dir(self) -> Path:
+        """Get temporary directory for intermediate files."""
+        if self._temp_dir is None:
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="autostore_temp_"))
+        return self._temp_dir
+
+    @property
+    def scheme(self) -> str:
+        """Return the URI scheme (e.g., 'file', 's3', 'gcs')."""
+        return self._parsed_uri.scheme
+
+    @abstractmethod
+    def exists(self, path: str) -> bool:
+        """Check if a file or directory exists at the given path."""
+        pass
+
+    @abstractmethod
+    def download(self, remote_path: str, local_path: Path) -> None:
+        """Download a file from remote storage to local path."""
+        pass
+
+    @abstractmethod
+    def upload(self, local_path: Path, remote_path: str) -> None:
+        """Upload a local file to remote storage."""
+        pass
+
+    @abstractmethod
+    def delete(self, path: str) -> None:
+        """Delete a file."""
+        pass
+
+    @abstractmethod
+    def list_files(self, pattern: str = "*", recursive: bool = True) -> t.Iterator[str]:
+        """List files matching a pattern."""
+        pass
+
+    @abstractmethod
+    def get_metadata(self, path: str) -> FileMetadata:
+        """Get metadata for a file."""
+        pass
+
+    def download_with_cache(self, remote_path: str) -> Path:
+        """Download file with caching support."""
+        if not self.cache_manager:
+            # No caching, use temp file
+            temp_file = self.get_temp_dir() / f"temp_{Path(remote_path).name}"
+            self.download(remote_path, temp_file)
+            return temp_file
+
+        # Check cache first
+        try:
+            metadata = self.get_metadata(remote_path)
+            etag = metadata.etag
+        except Exception:
+            etag = None
+
+        cached_file = self.cache_manager.get_cached_file(self.uri, remote_path, etag)
+        if cached_file:
+            log.debug(f"Cache hit for {remote_path}, using cached file: {cached_file}")
+            return cached_file
+
+        log.debug(f"Cache miss for {remote_path}, downloading...")
+
+        # Download to temp, then cache
+        temp_file = self.cache_manager.get_temp_dir() / f"download_{hash_obj(Path(remote_path).name)}"
+        self.download(remote_path, temp_file)
+
+        # Cache the file
+        cached_file = self.cache_manager.cache_file(self.uri, remote_path, temp_file, etag)
+        return cached_file
+
+    def mkdir(self, path: str) -> None:
+        """Create a directory and any necessary parent directories."""
+        pass
+
+    def copy(self, src_path: str, dst_path: str) -> None:
+        """Copy a file within the same backend."""
+        temp_file = self.download_with_cache(src_path)
+        self.upload(temp_file, dst_path)
+
+    def move(self, src_path: str, dst_path: str) -> None:
+        """Move a file within the same backend."""
+        self.copy(src_path, dst_path)
+        self.delete(src_path)
+
+    def get_size(self, path: str) -> int:
+        """Get the size of a file in bytes."""
+        return self.get_metadata(path).size
+
+    def is_directory(self, path: str) -> bool:
+        """Check if a path represents a directory."""
+        try:
+            next(self.list_files(f"{path.rstrip('/')}/*", recursive=False))
+            return True
+        except StopIteration:
+            return False
+
+    def cleanup(self) -> None:
+        """Clean up resources used by the backend."""
+        if self.cache_manager:
+            self.cache_manager.cleanup_temp()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.cleanup()
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(uri='{self.uri}')"
+
+
+@dataclass
+class LocalFileConfig(StorageConfig):
+    """Configuration for local file backend."""
+
+    pass
+
+
+class LocalFileBackend(StorageBackend):
+    """Local filesystem storage backend."""
+
+    def __init__(self, uri: str, config: LocalFileConfig):
+        super().__init__(uri, config)
+
+        # Parse the URI to get the actual path
+        parsed = urlparse(uri)
+
+        if parsed.scheme == "file":
+            self.root_path = Path(parsed.path)
+        elif parsed.scheme == "":
+            self.root_path = Path(uri)
+        else:
+            raise ValueError(f"Unsupported scheme for LocalFileBackend: {parsed.scheme}")
+
+        # Expand user home directory and resolve relative paths
+        self.root_path = self.root_path.expanduser().resolve()
+
+        # Canonicalize the root path to handle symlinks securely
+        self.root_path = Path(os.path.realpath(self.root_path))
+
+        # Create root directory if it doesn't exist
+        try:
+            self.root_path.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise StoragePermissionError(f"Cannot create root directory {self.root_path}: {e}")
+
+    def download_with_cache(self, remote_path: str) -> Path:
+        """For local files, just return the original path - no copying needed."""
+        return self._get_full_path(remote_path)
+
+    def _get_full_path(self, path: str) -> Path:
+        """Convert a relative path to an absolute path within the root directory."""
+        path = path.replace("\\", "/").strip("/")
+        full_path = (self.root_path / path).resolve()
+
+        # Security check with canonical path resolution
+        try:
+            # Use realpath to handle symlinks more securely
+            canonical_full_path = Path(os.path.realpath(full_path))
+            canonical_root_path = Path(os.path.realpath(self.root_path))
+
+            # Ensure the canonical resolved path is still within the canonical root directory
+            canonical_full_path.relative_to(canonical_root_path)
+
+            # Also verify the original resolved path is within the original root
+            # This catches cases where symlinks might bypass the canonical check
+            full_path.relative_to(self.root_path)
+
+        except ValueError:
+            raise StoragePermissionError(f"Path '{path}' resolves outside of root directory")
+
+        return full_path
+
+    def exists(self, path: str) -> bool:
+        """Check if a file or directory exists."""
+        try:
+            return self._get_full_path(path).exists()
+        except (OSError, StoragePermissionError):
+            return False
+
+    def download(self, remote_path: str, local_path: Path) -> None:
+        """Download (copy) file from storage to local path."""
+        full_path = self._get_full_path(remote_path)
+
+        try:
+            # Ensure parent directory exists
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file
+            shutil.copy2(full_path, local_path)
+        except FileNotFoundError:
+            raise StorageFileNotFoundError(f"File not found: {remote_path}")
+        except PermissionError as e:
+            raise StoragePermissionError(f"Permission denied reading {remote_path}: {e}")
+        except OSError as e:
+            raise StorageError(f"Error downloading {remote_path}: {e}")
+
+    def upload(self, local_path: Path, remote_path: str) -> None:
+        """Upload (copy) local file to storage."""
+        full_path = self._get_full_path(remote_path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            shutil.copy2(local_path, full_path)
+        except PermissionError as e:
+            raise StoragePermissionError(f"Permission denied writing {remote_path}: {e}")
+        except OSError as e:
+            raise StorageError(f"Error uploading {remote_path}: {e}")
+
+    def delete(self, path: str) -> None:
+        """Delete a file."""
+        full_path = self._get_full_path(path)
+
+        try:
+            if full_path.is_file():
+                full_path.unlink()
+            elif full_path.is_dir():
+                shutil.rmtree(full_path)
+            else:
+                raise StorageFileNotFoundError(f"File not found: {path}")
+        except FileNotFoundError:
+            raise StorageFileNotFoundError(f"File not found: {path}")
+        except PermissionError as e:
+            raise StoragePermissionError(f"Permission denied deleting {path}: {e}")
+        except OSError as e:
+            raise StorageError(f"Error deleting {path}: {e}")
+
+    def list_files(self, pattern: str = "*", recursive: bool = True) -> t.Iterator[str]:
+        """List files matching a pattern."""
+        try:
+            if recursive:
+                glob_pattern = "**/" + pattern if not pattern.startswith("**/") else pattern
+                paths = self.root_path.rglob(glob_pattern)
+            else:
+                paths = self.root_path.glob(pattern)
+
+            for full_path in paths:
+                if full_path.is_file():
+                    try:
+                        rel_path = full_path.relative_to(self.root_path)
+                        yield str(rel_path).replace("\\", "/")
+                    except ValueError:
+                        continue
+
+        except OSError as e:
+            raise StorageError(f"Error listing files with pattern '{pattern}': {e}")
+
+    def get_metadata(self, path: str) -> FileMetadata:
+        """Get file metadata."""
+        full_path = self._get_full_path(path)
+
+        try:
+            stat = full_path.stat()
+            modified_time = datetime.fromtimestamp(stat.st_mtime)
+            created_time = datetime.fromtimestamp(stat.st_ctime)
+            content_type = self._guess_content_type(full_path.suffix)
+
+            return FileMetadata(
+                size=stat.st_size,
+                modified_time=modified_time,
+                created_time=created_time,
+                content_type=content_type,
+                extra={
+                    "mode": stat.st_mode,
+                    "uid": stat.st_uid,
+                    "gid": stat.st_gid,
+                    "atime": stat.st_atime,
+                },
+            )
+
+        except FileNotFoundError:
+            raise StorageFileNotFoundError(f"File not found: {path}")
+        except OSError as e:
+            raise StorageError(f"Error getting metadata for {path}: {e}")
+
+    def _guess_content_type(self, extension: str) -> t.Optional[str]:
+        """Guess content type from file extension."""
+        extension = extension.lower()
+        return CONTENT_TYPES.get(extension)
+
+
+class BackendRegistry:
+    """Registry for managing storage backends."""
+
+    def __init__(self):
+        self._backends: t.Dict[str, t.Type[StorageBackend]] = {}
+        self._register_default_backends()
+
+    def _register_default_backends(self):
+        """Register default backends."""
+        self.register("file", LocalFileBackend)
+        self.register("", LocalFileBackend)  # Empty scheme defaults to local
+
+    def register(self, scheme: str, backend_class: t.Type[StorageBackend]) -> None:
+        """Register a backend for a URI scheme."""
+        self._backends[scheme.lower()] = backend_class
+
+    def unregister(self, scheme: str) -> None:
+        """Unregister a backend scheme."""
+        self._backends.pop(scheme.lower(), None)
+
+    def get_backend_class(self, scheme: str) -> t.Optional[t.Type[StorageBackend]]:
+        """Get backend class for a scheme."""
+        return self._backends.get(scheme.lower())
+
+    def get_supported_schemes(self) -> t.List[str]:
+        """Get list of supported URI schemes."""
+        return list(self._backends.keys())
+
+
+# Global backend registry
+_backend_registry = BackendRegistry()
 
 
 class DataHandler(ABC):
@@ -180,13 +588,13 @@ class DataHandler(ABC):
         pass
 
     @abstractmethod
-    def read(self, file_path: Path) -> t.Any:
-        """Read data from the file path."""
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
+        """Read data from file."""
         pass
 
     @abstractmethod
-    def write(self, data: t.Any, file_path: Path) -> None:
-        """Write data to the file path."""
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
+        """Write data to file."""
         pass
 
     @property
@@ -198,7 +606,7 @@ class DataHandler(ABC):
     @property
     @abstractmethod
     def priority(self) -> int:
-        """Priority for type inference (higher = more preferred). Default: 0"""
+        """Priority for type inference (higher = more preferred)."""
         pass
 
 
@@ -210,27 +618,28 @@ class ParquetHandler(DataHandler):
 
     def can_handle_data(self, data: t.Any) -> bool:
         try:
-            import polars as pl  # type: ignore
+            import polars as pl
 
             return isinstance(data, (pl.DataFrame, pl.LazyFrame))
         except ImportError:
             return False
 
-    def read(self, file_path: Path) -> t.Any:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
         try:
-            import polars as pl  # type: ignore
+            import polars as pl
 
-            return pl.scan_parquet(file_path)
+            return pl.read_parquet(file_path)
         except ImportError:
             raise ImportError("Polars is required to load .parquet files")
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         try:
-            import polars as pl  # type: ignore
+            import polars as pl
 
             if isinstance(data, pl.LazyFrame):
                 data = data.collect()
             if isinstance(data, pl.DataFrame):
+                # Ensure parent directory exists
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 data.write_parquet(file_path)
             else:
@@ -244,7 +653,7 @@ class ParquetHandler(DataHandler):
 
     @property
     def priority(self) -> int:
-        return 10  # High priority for DataFrames
+        return 10
 
 
 class CSVHandler(DataHandler):
@@ -255,23 +664,23 @@ class CSVHandler(DataHandler):
 
     def can_handle_data(self, data: t.Any) -> bool:
         try:
-            import polars as pl  # type: ignore
+            import polars as pl
 
             return isinstance(data, (pl.DataFrame, pl.LazyFrame))
         except ImportError:
             return False
 
-    def read(self, file_path: Path) -> t.Any:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
         try:
-            import polars as pl  # type: ignore
+            import polars as pl
 
-            return pl.scan_csv(file_path)
+            return pl.read_csv(file_path, truncate_ragged_lines=True)
         except ImportError:
             raise ImportError("Polars is required to load .csv files")
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         try:
-            import polars as pl  # type: ignore
+            import polars as pl
 
             if isinstance(data, pl.LazyFrame):
                 data = data.collect()
@@ -289,7 +698,7 @@ class CSVHandler(DataHandler):
 
     @property
     def priority(self) -> int:
-        return 5  # Lower priority than Parquet for DataFrames
+        return 5
 
 
 class JSONHandler(DataHandler):
@@ -299,15 +708,15 @@ class JSONHandler(DataHandler):
         return extension.lower() == ".json"
 
     def can_handle_data(self, data: t.Any) -> bool:
-        return isinstance(data, (dict, list, int, float, bool, type(None)))
+        return isinstance(data, (dict, list, int, float, bool, type(None), str))
 
-    def read(self, file_path: Path) -> t.Any:
-        with open(file_path, "r") as f:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, default=str)
 
     @property
@@ -316,7 +725,7 @@ class JSONHandler(DataHandler):
 
     @property
     def priority(self) -> int:
-        return 8  # High priority for standard Python types
+        return 8
 
 
 class JSONLHandler(DataHandler):
@@ -326,21 +735,25 @@ class JSONLHandler(DataHandler):
         return extension.lower() == ".jsonl"
 
     def can_handle_data(self, data: t.Any) -> bool:
-        # Handle lists of dictionaries for JSONL
         return isinstance(data, list) and len(data) > 0 and all(isinstance(item, dict) for item in data)
 
-    def read(self, file_path: Path) -> t.List[t.Any]:
-        with open(file_path, "r") as f:
-            return [json.loads(line.strip()) for line in f if line.strip()]
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.List[t.Any]:
+        result = []
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    result.append(json.loads(line))
+        return result
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         if not isinstance(data, list):
             raise TypeError(f"Cannot save {type(data)} as JSONL. Expected list")
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             for item in data:
-                json.dump(item, f, default=str)
-                f.write("\n")
+                f.write(json.dumps(item, default=str) + "\n")
 
     @property
     def extensions(self) -> t.List[str]:
@@ -348,7 +761,7 @@ class JSONLHandler(DataHandler):
 
     @property
     def priority(self) -> int:
-        return 6  # Medium priority
+        return 6
 
 
 class TorchHandler(DataHandler):
@@ -359,7 +772,7 @@ class TorchHandler(DataHandler):
 
     def can_handle_data(self, data: t.Any) -> bool:
         try:
-            import torch  # type: ignore
+            import torch
 
             return (
                 isinstance(data, torch.Tensor)
@@ -373,17 +786,17 @@ class TorchHandler(DataHandler):
         except ImportError:
             return False
 
-    def read(self, file_path: Path) -> t.Any:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
         try:
-            import torch  # type: ignore
+            import torch
 
             return torch.load(file_path, map_location="cpu")
         except ImportError:
             raise ImportError("PyTorch is required to load .pt/.pth files")
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         try:
-            import torch  # type: ignore
+            import torch
 
             file_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(data, file_path)
@@ -399,85 +812,6 @@ class TorchHandler(DataHandler):
         return 9
 
 
-class PickleHandler(DataHandler):
-    """Handler for Pickle files - fallback for any Python object."""
-
-    def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() in [".pkl", ".pickle"]
-
-    def can_handle_data(self, data: t.Any) -> bool:
-        # Pickle can handle any Python object, but lowest priority
-        return True
-
-    def read(self, file_path: Path) -> t.Any:
-        with open(file_path, "rb") as f:
-            return pickle.load(f)
-
-    def write(self, data: t.Any, file_path: Path) -> None:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "wb") as f:
-            pickle.dump(data, f)
-
-    @property
-    def extensions(self) -> t.List[str]:
-        return [".pkl", ".pickle"]
-
-    @property
-    def priority(self) -> int:
-        return 1  # Lowest priority - fallback option
-
-
-class NumpyHandler(DataHandler):
-    """Handler for NumPy arrays."""
-
-    def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() in [".npy", ".npz"]
-
-    def can_handle_data(self, data: t.Any) -> bool:
-        try:
-            import numpy as np  # type: ignore
-
-            return isinstance(data, np.ndarray)
-        except ImportError:
-            return False
-
-    def read(self, file_path: Path) -> t.Any:
-        try:
-            import numpy as np  # type: ignore
-
-            return np.load(file_path)
-        except ImportError:
-            raise ImportError("NumPy is required to load .npy/.npz files")
-
-    def write(self, data: t.Any, file_path: Path) -> None:
-        try:
-            import numpy as np  # type: ignore
-
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            if file_path.suffix.lower() == ".npy":
-                if isinstance(data, np.ndarray):
-                    np.save(file_path, data)
-                else:
-                    raise TypeError(f"Cannot save {type(data)} as .npy. Expected numpy array")
-            elif file_path.suffix.lower() == ".npz":
-                if isinstance(data, dict):
-                    np.savez(file_path, **data)
-                elif isinstance(data, np.ndarray):
-                    np.savez(file_path, data)
-                else:
-                    raise TypeError(f"Cannot save {type(data)} as .npz. Expected dict or numpy array")
-        except ImportError:
-            raise ImportError("NumPy is required to save .npy/.npz files")
-
-    @property
-    def extensions(self) -> t.List[str]:
-        return [".npy", ".npz"]
-
-    @property
-    def priority(self) -> int:
-        return 9
-
-
 class TextHandler(DataHandler):
     """Handler for plain text files."""
 
@@ -487,13 +821,14 @@ class TextHandler(DataHandler):
     def can_handle_data(self, data: t.Any) -> bool:
         return isinstance(data, str)
 
-    def read(self, file_path: Path) -> str:
+    def read_from_file(self, file_path: Path, file_extension: str) -> str:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         if not isinstance(data, str):
             raise TypeError(f"Cannot save {type(data)} as text. Expected string")
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(data)
@@ -507,6 +842,82 @@ class TextHandler(DataHandler):
         return 7
 
 
+class YAMLHandler(DataHandler):
+    """Handler for YAML files."""
+
+    def can_handle_extension(self, extension: str) -> bool:
+        return extension.lower() in [".yaml", ".yml"]
+
+    def can_handle_data(self, data: t.Any) -> bool:
+        return isinstance(data, (dict, list, str, int, float, bool, type(None)))
+
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
+        try:
+            import yaml
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+        except ImportError:
+            raise ImportError("PyYAML is required to load YAML files")
+
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
+        try:
+            import yaml
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False)
+        except ImportError:
+            raise ImportError("PyYAML is required to save YAML files")
+
+    @property
+    def extensions(self) -> t.List[str]:
+        return [".yaml", ".yml"]
+
+    @property
+    def priority(self) -> int:
+        return 7
+
+
+class ImageHandler(DataHandler):
+    """Handler for PIL/Pillow Image objects."""
+
+    def can_handle_extension(self, extension: str) -> bool:
+        return extension.lower() in [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
+
+    def can_handle_data(self, data: t.Any) -> bool:
+        return (
+            hasattr(data, "save")
+            and hasattr(data, "mode")
+            and hasattr(data, "size")
+            and hasattr(data.__class__, "__module__")
+            and "PIL" in str(data.__class__.__module__)
+        )
+
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
+        try:
+            from PIL import Image
+
+            return Image.open(file_path)
+        except ImportError:
+            raise ImportError("Pillow is required to load image files")
+
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        # Determine format from extension
+        format_map = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".bmp": "BMP", ".tiff": "TIFF"}
+        format_name = format_map.get(file_extension.lower(), "PNG")
+        data.save(file_path, format=format_name)
+
+    @property
+    def extensions(self) -> t.List[str]:
+        return [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
+
+    @property
+    def priority(self) -> int:
+        return 10
+
+
 class SparseHandler(DataHandler):
     """Handler for SciPy sparse matrices."""
 
@@ -515,26 +926,27 @@ class SparseHandler(DataHandler):
 
     def can_handle_data(self, data: t.Any) -> bool:
         try:
-            from scipy import sparse  # type: ignore
+            from scipy import sparse
 
             return sparse.issparse(data)
         except ImportError:
             return False
 
-    def read(self, file_path: Path) -> t.Any:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
         try:
-            from scipy import sparse  # type: ignore
+            from scipy import sparse
 
             return sparse.load_npz(file_path)
         except ImportError:
             raise ImportError("SciPy is required to load .sparse files")
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         try:
-            from scipy import sparse  # type: ignore
+            from scipy import sparse
 
             if not sparse.issparse(data):
                 raise TypeError(f"Cannot save {type(data)} as .sparse. Expected scipy sparse matrix")
+
             file_path.parent.mkdir(parents=True, exist_ok=True)
             sparse.save_npz(file_path, data)
         except ImportError:
@@ -556,23 +968,21 @@ class PydanticHandler(DataHandler):
         return extension.lower() == ".pydantic.json"
 
     def can_handle_data(self, data: t.Any) -> bool:
-        # Check if it's a Pydantic BaseModel instance
         return (
             hasattr(data, "model_dump")
             and hasattr(data, "model_validate")
             and hasattr(data.__class__, "__pydantic_core_schema__")
         )
 
-    def read(self, file_path: Path) -> t.Any:
-        # This would need the original model class to reconstruct
-        # For demo purposes, just return the JSON data
-        with open(file_path, "r") as f:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
+        # Note: This would need the original model class to reconstruct
+        # For now, just return the JSON data
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w") as f:
-            # Use Pydantic's model_dump method
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data.model_dump(), f, indent=2, default=str)
 
     @property
@@ -581,7 +991,7 @@ class PydanticHandler(DataHandler):
 
     @property
     def priority(self) -> int:
-        return 12  # Higher than regular JSON for Pydantic models
+        return 12
 
 
 class DataclassHandler(DataHandler):
@@ -591,20 +1001,18 @@ class DataclassHandler(DataHandler):
         return extension.lower() == ".dataclass.json"
 
     def can_handle_data(self, data: t.Any) -> bool:
-        # Check if it's a dataclass instance
         return hasattr(data, "__dataclass_fields__")
 
-    def read(self, file_path: Path) -> t.Any:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
         # Similar limitation as Pydantic - would need original class
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
         import dataclasses
 
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w") as f:
-            # Use dataclasses.asdict for serialization
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(dataclasses.asdict(data), f, indent=2, default=str)
 
     @property
@@ -613,83 +1021,86 @@ class DataclassHandler(DataHandler):
 
     @property
     def priority(self) -> int:
-        return 11  # Higher than regular JSON for dataclasses
+        return 11
 
 
-class YAMLHandler(DataHandler):
-    """Custom handler for YAML files."""
+class PickleHandler(DataHandler):
+    """Handler for Pickle files - fallback for any Python object."""
 
     def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() in [".yaml", ".yml"]
+        return extension.lower() in [".pkl", ".pickle"]
 
     def can_handle_data(self, data: t.Any) -> bool:
-        # YAML can handle basic Python types like JSON
-        return isinstance(data, (dict, list, str, int, float, bool, type(None)))
+        return True  # Pickle can handle any Python object
 
-    def read(self, file_path: Path) -> t.Any:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
+        with open(file_path, "rb") as f:
+            return pickle.load(f)
+
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "wb") as f:
+            pickle.dump(data, f)
+
+    @property
+    def extensions(self) -> t.List[str]:
+        return [".pkl", ".pickle"]
+
+    @property
+    def priority(self) -> int:
+        return 1  # Lowest priority - fallback option
+
+
+class NumpyHandler(DataHandler):
+    """Handler for NumPy arrays."""
+
+    def can_handle_extension(self, extension: str) -> bool:
+        return extension.lower() in [".npy", ".npz"]
+
+    def can_handle_data(self, data: t.Any) -> bool:
         try:
-            import yaml  # type: ignore
+            import numpy as np
 
-            with open(file_path, "r") as f:
-                return yaml.safe_load(f)
+            return isinstance(data, np.ndarray)
         except ImportError:
-            raise ImportError("PyYAML is required to load YAML files")
+            return False
 
-    def write(self, data: t.Any, file_path: Path) -> None:
+    def read_from_file(self, file_path: Path, file_extension: str) -> t.Any:
         try:
-            import yaml  # type: ignore
+            import numpy as np
+
+            return np.load(file_path)
+        except ImportError:
+            raise ImportError("NumPy is required to load .npy/.npz files")
+
+    def write_to_file(self, data: t.Any, file_path: Path, file_extension: str) -> None:
+        try:
+            import numpy as np
 
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(file_path, "w") as f:
-                yaml.dump(data, f, default_flow_style=False)
+
+            if file_extension.lower() == ".npy":
+                if isinstance(data, np.ndarray):
+                    np.save(file_path, data)
+                else:
+                    raise TypeError(f"Cannot save {type(data)} as .npy. Expected numpy array")
+            elif file_extension.lower() == ".npz":
+                if isinstance(data, dict):
+                    np.savez(file_path, **data)
+                elif isinstance(data, np.ndarray):
+                    np.savez(file_path, data)
+                else:
+                    raise TypeError(f"Cannot save {type(data)} as .npz. Expected dict or numpy array")
         except ImportError:
-            raise ImportError("PyYAML is required to save YAML files")
+            raise ImportError("NumPy is required to save .npy/.npz files")
 
     @property
     def extensions(self) -> t.List[str]:
-        return [".yaml", ".yml"]
+        return [".npy", ".npz"]
 
     @property
     def priority(self) -> int:
-        return 7  # Same as JSON for basic types
-
-
-class ImageHandler(DataHandler):
-    """Handler for PIL/Pillow Image objects."""
-
-    def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() in [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
-
-    def can_handle_data(self, data: t.Any) -> bool:
-        # Check if it's a PIL Image
-        return (
-            hasattr(data, "save")
-            and hasattr(data, "mode")
-            and hasattr(data, "size")
-            and hasattr(data.__class__, "__module__")
-            and "PIL" in str(data.__class__.__module__)
-        )
-
-    def read(self, file_path: Path) -> t.Any:
-        try:
-            from PIL import Image  # type: ignore
-
-            return Image.open(file_path)
-        except ImportError:
-            raise ImportError("Pillow is required to load image files")
-
-    def write(self, data: t.Any, file_path: Path) -> None:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        # PIL Image objects have a save method
-        data.save(file_path)
-
-    @property
-    def extensions(self) -> t.List[str]:
-        return [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
-
-    @property
-    def priority(self) -> int:
-        return 10
+        return 9
 
 
 class HandlerRegistry:
@@ -708,6 +1119,7 @@ class HandlerRegistry:
             JSONHandler(),
             JSONLHandler(),
             PydanticHandler(),
+            DataclassHandler(),
             YAMLHandler(),
             ImageHandler(),
             TorchHandler(),
@@ -772,369 +1184,309 @@ class HandlerRegistry:
 
 class AutoStore:
     """
-    Read and write files like a dictionary.
+    Read and write files like a dictionary with pluggable storage backends.
 
-    Supported data types:
-    - Parquet (.parquet)
-    - CSV (.csv)
-    - JSON (.json)
-    - JSON Lines (.jsonl)
-    - YAML (.yaml, .yml)
-    - Images (.png, .jpg, .jpeg, .bmp, .tiff)
-    - Pydantic models (.pydantic.json)
-    - Dataclass instances (.dataclass.json)
-    - Torch model weights (.pt, .pth)
-    - Pickle (.pkl, .pickle)
-    - Numpy arrays (.npy, .npz)
-    - Sparse numpy arrays (.sparse)
-        - Sparse matrices are stored in scipy's compressed .npz format, only non-zero elements are stored,
-        and maintains the specific sparse matrix type (CSR, CSC, etc.)
-    - HTML (.html)
-    - Text (.txt)
-
-    Examples:
-
-        >>> store = AutoStore(Path.home() / "data")
-        >>> store["features] = pl.DataFrame({"id": [1, 2], "value": [0.1, 0.2]})  # Save parquet file
-        >>> store["config"] = {"version": "1.0", "debug": True}  # Save JSON file
-        >>> store["logs.jsonl"] = [{"event": "start", "time": "2023-01-01T00:00:00Z"}]  # Save JSON Lines
-        >>> store["experiments/run_1/weights"] = np.random.rand(100, 768)  # Save Numpy array
-        >>> store["features.parquet"]  # Returns a LazyFrame
-        >>> store["features"]  # Omit the file extension
-        >>> store["models/version_1/model.pt"]  # Nested directory, loads torch model weights
-        >>> print(list(store.keys()))  # All available keys, with and without extensions
-        >>> print(list(store.iter_files()))  # All files with extensions
-        >>> del store["old_experiment"]  # Delete a file
-        >>> "features" in ds  # Check if a file exists
-        >>> store.zip("backup")  # Zips data directory to ../backup.zip
-        >>> store.zip("models", output_dir=store.data_dir / "zips")  # Zips models directory into an output directory
-        >>> store.zip("models", pattern="*.pt")  # Only PyTorch files
-        >>> store.zip("models", source_path="models", pattern="*.pt")  # Only PyTorch files from a source subdirectory
-        >>> store.unzip("backup.zip")  # Unzips backup.zip into the current data directory
-        >>> store.unzip("backup.zip", output_dir=store.data_dir / "extracted")  # Unzips to a specified directory
+    Now uses upload/download operations with caching and dataclass configs.
+    Optimized for local file access without unnecessary copying.
     """
 
-    def __init__(self, data_dir: Path):
-        self.data_dir = Path(data_dir)
-        if not self.data_dir.exists():
-            self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.registry = HandlerRegistry()
+    def __init__(
+        self,
+        storage_uri: t.Union[str, Path],
+        config: t.Optional[StorageConfig] = None,
+    ):
+        """
+        Initialize AutoStore with a storage backend.
+
+        Args:
+            storage_uri: Storage URI or path
+            config: Backend configuration (dataclass)
+        """
+        # Handle Path objects
+        if isinstance(storage_uri, Path):
+            storage_uri = str(storage_uri)
+
+        self.storage_uri = storage_uri
+
+        # Parse URI to determine backend
+        parsed_uri = urlparse(storage_uri)
+        scheme = parsed_uri.scheme.lower() if parsed_uri.scheme else ""
+
+        # Get backend class from registry
+        backend_class = _backend_registry.get_backend_class(scheme)
+        if not backend_class:
+            supported = _backend_registry.get_supported_schemes()
+            raise ValueError(f"Unsupported storage scheme: '{scheme}'. Supported schemes: {supported}")
+
+        # Create default config if none provided
+        if config is None:
+            if scheme in ("", "file"):
+                config = LocalFileConfig()
+            else:
+                config = StorageConfig()
+
+        # Initialize backend
+        try:
+            self.backend = backend_class(storage_uri, config)
+        except Exception as e:
+            raise StorageError(f"Failed to initialize {scheme} backend: {e}") from e
+
+        self.handler_registry = HandlerRegistry()
+
+    @classmethod
+    def register_backend(cls, scheme: str, backend_class: t.Type[StorageBackend]) -> None:
+        """Register a new storage backend."""
+        _backend_registry.register(scheme, backend_class)
+
+    @classmethod
+    def unregister_backend(cls, scheme: str) -> None:
+        """Unregister a storage backend."""
+        _backend_registry.unregister(scheme)
+
+    @classmethod
+    def get_supported_backends(cls) -> t.List[str]:
+        """Get list of supported backend schemes."""
+        return _backend_registry.get_supported_schemes()
 
     def register_handler(self, handler: DataHandler) -> None:
-        """Register a custom handler."""
-        self.registry.register(handler)
+        """Register a custom data handler."""
+        self.handler_registry.register(handler)
 
     def unregister_handler(self, handler_class: t.Type[DataHandler]) -> None:
-        """Unregister a handler by class type."""
-        self.registry.unregister(handler_class)
+        """Unregister a data handler by class type."""
+        self.handler_registry.unregister(handler_class)
 
     def _infer_extension(self, data: t.Any) -> str:
         """Infer the appropriate file extension based on data instance."""
-        # Get handler for this data instance
-        handler = self.registry.get_handler_for_data(data)
+        handler = self.handler_registry.get_handler_for_data(data)
         if handler and handler.extensions:
-            return handler.extensions[0]  # Return the first (primary) extension
+            return handler.extensions[0]
+        return ".pkl"  # Fallback to pickle
 
-        # Fallback to pickle if no handler found
-        return ".pkl"
-
-    def _find_file(self, key: str) -> Path:
-        """Find the actual file path for a given key."""
+    def _find_file_key(self, key: str) -> str:
+        """Find the actual file key for a given key."""
         # Normalize the key
         key = key.replace("\\", "/")
 
-        # Try direct path first (with extension)
-        potential_path = self.data_dir / key
-        if potential_path.exists() and potential_path.is_file():
-            return potential_path
+        # Try direct key first (with extension)
+        if self.backend.exists(key):
+            return key
 
         # If no extension provided, search for files with supported extensions
         if not Path(key).suffix:
-            for ext in self.registry.get_supported_extensions():
-                test_path = potential_path.with_suffix(ext)
-                if test_path.exists():
-                    return test_path
+            for ext in self.handler_registry.get_supported_extensions():
+                test_key = key + ext
+                if self.backend.exists(test_key):
+                    return test_key
 
-        # Search recursively through subdirectories
+        # If still not found, raise an error instead of doing expensive iteration
+        raise StorageFileNotFoundError(f"No file found for key: {key}")
+
+    def find_file_fuzzy(self, key: str) -> t.Optional[str]:
+        """
+        Perform fuzzy search for a file key.
+
+        This method performs an expensive iteration through all files and should
+        be used sparingly. For performance-critical applications, use exact keys.
+
+        Args:
+            key: The key to search for (case-insensitive, stem matching)
+
+        Returns:
+            The actual file key if found, None otherwise
+        """
         key_lower = key.lower()
         key_stem = Path(key).stem.lower()
 
-        for file_path in self.data_dir.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in self.registry.get_supported_extensions():
-                rel_path = file_path.relative_to(self.data_dir)
-                rel_path_str = str(rel_path).replace("\\", "/")
+        for file_key in self.backend.list_files():
+            file_key_lower = file_key.lower()
 
-                # Check exact match (case insensitive)
-                if rel_path_str.lower() == key_lower:
-                    return file_path
+            # Check exact match (case insensitive)
+            if file_key_lower == key_lower:
+                return file_key
 
-                # Check stem match (filename without extension)
-                if rel_path.stem.lower() == key_stem:
-                    return file_path
+            # Check stem match (filename without extension)
+            if Path(file_key).stem.lower() == key_stem:
+                return file_key
 
-        raise FileNotFoundError(f"No supported file found for key: {key}")
+        return None
 
     def __getitem__(self, key: str) -> t.Any:
         """Load and return data for the given key."""
-        file_path = self._find_file(key)
-        ext = file_path.suffix.lower()
-
-        handler = self.registry.get_handler_for_extension(ext)
-        if not handler:
-            supported = ", ".join(self.registry.get_supported_extensions())
-            raise ValueError(f"Unsupported file type: {ext}. Supported types: {supported}")
-
         try:
-            result = handler.read(file_path)
+            file_key = self._find_file_key(key)
 
+            # Get file extension to determine handler
+            ext = Path(file_key).suffix.lower()
+            handler = self.handler_registry.get_handler_for_extension(ext)
+
+            if not handler:
+                supported = ", ".join(self.handler_registry.get_supported_extensions())
+                raise ValueError(f"Unsupported file type: {ext}. Supported types: {supported}")
+
+            # Download file (with caching) - LocalFileBackend returns original path
+            local_file_path = self.backend.download_with_cache(file_key)
+
+            # Use handler to deserialize from file
+            result = handler.read_from_file(local_file_path, ext)
             return result
+
         except Exception as e:
-            raise RuntimeError(f"Failed to load {file_path}: {str(e)}") from e
+            if isinstance(e, (StorageFileNotFoundError, ValueError)):
+                raise
+            raise StorageError(f"Failed to load {key}: {str(e)}") from e
 
     def __setitem__(self, key: str, data: t.Any) -> None:
         """Save data to the given key."""
         # Normalize the key
         key = key.replace("\\", "/")
-        potential_path = self.data_dir / key
 
         # If no extension provided, infer it from the data type
         if not Path(key).suffix:
             extension = self._infer_extension(data)
-            potential_path = potential_path.with_suffix(extension)
+            key = key + extension
 
         # Get the appropriate handler
-        ext = potential_path.suffix.lower()
-        handler = self.registry.get_handler_for_extension(ext)
+        ext = Path(key).suffix.lower()
+        handler = self.handler_registry.get_handler_for_extension(ext)
 
         if not handler:
             # Fallback to pickle for unknown extensions
-            handler = self.registry.get_handler_for_extension(".pkl")
-            potential_path = potential_path.with_suffix(".pkl")
+            handler = self.handler_registry.get_handler_for_extension(".pkl")
+            key = str(Path(key).with_suffix(".pkl"))
+            ext = ".pkl"
+            log.warning(f"No handler found for {ext}. Using fallback handler (pickle).")
 
         try:
-            handler.write(data, potential_path)
+            # Optimize for LocalFileBackend - write directly to final location
+            if isinstance(self.backend, LocalFileBackend):
+                final_path = self.backend._get_full_path(key)
+                handler.write_to_file(data, final_path, ext)
+            else:
+                # For cloud storage - use temp file + upload
+                temp_dir = (
+                    self.backend.cache_manager.get_temp_dir()
+                    if self.backend.cache_manager
+                    else self.backend.get_temp_dir()
+                )
+                temp_file = temp_dir / f"upload_{Path(key).name}"
+
+                # Use handler to serialize data to file
+                handler.write_to_file(data, temp_file, ext)
+
+                # Upload file to backend
+                self.backend.upload(temp_file, key)
+
         except Exception as e:
-            raise RuntimeError(f"Failed to save data to {potential_path}: {str(e)}") from e
+            raise StorageError(f"Failed to save data to {key}: {str(e)}") from e
 
     def __contains__(self, key: str) -> bool:
         """Check if a key exists in the data store."""
         try:
-            self._find_file(key)
+            self._find_file_key(key)
             return True
-        except FileNotFoundError:
+        except StorageFileNotFoundError:
             return False
 
     def __delitem__(self, key: str) -> None:
         """Delete a file from the data store."""
-        file_path = self._find_file(key)
-        if not file_path.exists():
-            raise FileNotFoundError(f"File not found for key: {key}")
-        if not file_path.is_file():
-            raise ValueError(f"Key {key} does not point to a file: {file_path}")
-        file_path.unlink()
-
-    def iter_files(self, pattern: str = "*") -> t.Iterator[str]:
-        """
-        Iterate over all available files matching the pattern.
-
-        Args:
-            pattern (str): Glob pattern to match files. Defaults to "*".
-
-        Yields:
-            str: Relative file paths matching the pattern.
-
-        Raises:
-            ValueError: If the pattern is not a valid glob pattern.
-
-        Examples:
-
-            >>> store = AutoStore(Path.home() / "data")
-            >>> list(ds.iter_files("*.json"))  # Iterate over all JSON files
-            >>> list(ds.iter_files("config/*.json"))  # Iterate over JSON files in a subdirectory
-        """
-        supported_extensions = self.registry.get_supported_extensions()
-        for file_path in self.data_dir.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
-                rel_path = str(file_path.relative_to(self.data_dir)).replace("\\", "/")
-                if fnmatch(rel_path, pattern):
-                    yield rel_path
+        file_key = self._find_file_key(key)
+        try:
+            self.backend.delete(file_key)
+        except Exception as e:
+            raise StorageError(f"Failed to delete {key}: {str(e)}") from e
 
     def keys(self) -> t.Iterator[str]:
-        """
-        Iterate over all available keys (file paths with and without extensions).
-
-        Yields:
-            str: All available keys in the data shelf. Includes both file paths with and without extensions.
-
-        Raises:
-            ValueError: If the pattern is not a valid glob pattern.
-
-        Examples:
-
-            >>> store = AutoStore(Path.home() / "data")
-            >>> list(ds.keys())  # List all available keys
-        """
+        """Iterate over all available keys."""
         seen = set()
-        supported_extensions = self.registry.get_supported_extensions()
-        for file_path in self.data_dir.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
-                rel_path = file_path.relative_to(self.data_dir)
-                rel_path_str = str(rel_path).replace("\\", "/")
-                rel_path_no_ext = str(rel_path.with_suffix("")).replace("\\", "/")
-                for key in (rel_path_str, rel_path_no_ext):
+        supported_extensions = self.handler_registry.get_supported_extensions()
+
+        for file_path in self.backend.list_files():
+            if Path(file_path).suffix.lower() in supported_extensions:
+                file_path_no_ext = str(Path(file_path).with_suffix(""))
+
+                for key in file_path_no_ext:
                     if key not in seen:
                         seen.add(key)
                         yield key
 
+    def list_files(self, pattern: str = "*", recursive: bool = True) -> t.Iterator[str]:
+        """List files matching a pattern."""
+        supported_extensions = self.handler_registry.get_supported_extensions()
+
+        for file_path in self.backend.list_files(pattern, recursive):
+            if Path(file_path).suffix.lower() in supported_extensions:
+                yield file_path
+
+    def get_metadata(self, key: str) -> FileMetadata:
+        """Get metadata for a file."""
+        file_key = self._find_file_key(key)
+        return self.backend.get_metadata(file_key)
+
+    def copy(self, src_key: str, dst_key: str) -> None:
+        """Copy a file within the storage backend."""
+        src_file_key = self._find_file_key(src_key)
+
+        # If dst_key has no extension, infer from source
+        if not Path(dst_key).suffix:
+            src_ext = Path(src_file_key).suffix
+            dst_key = dst_key + src_ext
+
+        try:
+            self.backend.copy(src_file_key, dst_key)
+        except Exception as e:
+            raise StorageError(f"Failed to copy {src_key} to {dst_key}: {str(e)}") from e
+
+    def move(self, src_key: str, dst_key: str) -> None:
+        """Move a file within the storage backend."""
+        src_file_key = self._find_file_key(src_key)
+
+        # If dst_key has no extension, infer from source
+        if not Path(dst_key).suffix:
+            src_ext = Path(src_file_key).suffix
+            dst_key = dst_key + src_ext
+
+        try:
+            self.backend.move(src_file_key, dst_key)
+        except Exception as e:
+            raise StorageError(f"Failed to move {src_key} to {dst_key}: {str(e)}") from e
+
+    def exists(self, key: str) -> bool:
+        """Check if a file exists."""
+        return key in self
+
+    def get_size(self, key: str) -> int:
+        """Get the size of a file in bytes."""
+        return self.get_metadata(key).size
+
+    def cleanup_cache(self) -> None:
+        """Clean up expired cache entries."""
+        if self.backend.cache_manager:
+            self.backend.cache_manager.cleanup_expired()
+
     def __len__(self) -> int:
-        """Return the number of files in the data shelf."""
-        return sum(1 for _ in self.iter_files("*"))
+        """Return the number of files in the data store."""
+        return sum(1 for _ in self.list_files("*"))
 
     def __repr__(self) -> str:
-        return f"AutoStore(data_dir='{self.data_dir}', handlers={len(self.registry._handlers)})"
+        return f"AutoStore(storage_uri='{self.storage_uri}', backend={self.backend.__class__.__name__})"
 
-    def zip(
-        self,
-        name: str,
-        output_dir: t.Optional[t.Union[str, Path]] = None,
-        source_path: t.Optional[str] = None,
-        pattern: str = "*",
-    ) -> Path:
-        """
-        Create a zip archive of the data directory or specified path/pattern.
+    def __enter__(self):
+        """Context manager entry."""
+        return self
 
-        Args:
-            name (str): Name of the zip file.
-            output_dir (str or Path, optional): Directory to save the zip file. Defaults to the parent directory of data_dir.
-            source_path (str, optional): Subdirectory to zip. Defaults to the data directory.
-            pattern (str, optional): Glob pattern to filter files. Defaults to "*".
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.cleanup()
 
-        Returns:
-            Path: Path to the created zip file.
-
-        Raises:
-            FileNotFoundError: If the source directory does not exist.
-            RuntimeError: If zipping fails.
-
-        Examples:
-
-            >>> store = AutoStore(Path.home() / "data")
-            >>> store.zip("backup")  # Zips the entire data directory
-            >>> store.zip("models", output_dir=ds.data_dir / "zips")  # Zips a subdirectory
-            >>> store.zip("models", pattern="*.pt")  # Only PyTorch files
-            >>> store.zip("models", source_path="models", pattern="*.pt")  # Only PyTorch files from a source subdirectory
-        """
-        if source_path:
-            source_dir = self.data_dir / source_path
-        else:
-            source_dir = self.data_dir
-
-        if output_dir is None:
-            output_dir = self.data_dir.parent
-        else:
-            output_dir = Path(output_dir)
-
-        name = name.replace("\\", "/")
-        if not name.endswith(".zip"):
-            name += ".zip"
-        output_zip_path = output_dir / name
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        if output_zip_path.exists():
-            output_zip_path.unlink()
-
-        original_cwd = os.getcwd()
-        try:
-            if not source_dir.exists() or not source_dir.is_dir():
-                raise FileNotFoundError(f"Source directory not found: {source_dir}")
-
-            os.chdir(source_dir)
-
-            with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk("."):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-
-                        if pattern != "*":
-                            if not fnmatch(file, pattern):
-                                rel_path = file_path.replace("\\", "/").lstrip("./")
-                                if not fnmatch(rel_path, pattern):
-                                    continue
-
-                        zipf.write(file_path)
-        except Exception as e:
-            raise RuntimeError(f"Failed to create zip file: {str(e)}") from e
-        finally:
-            os.chdir(original_cwd)
-
-        return output_zip_path
-
-    def unzip(
-        self,
-        zip_path: t.Union[str, Path],
-        output_dir: t.Optional[t.Union[str, Path]] = None,
-        delete_zip: bool = False,
-    ) -> None:
-        """
-        Unzip a zip file into the data directory or specified output directory.
-
-        Args:
-            zip_path (str or Path): Path to the zip file.
-            output_dir (str or Path, optional): Directory to extract files to. Defaults to the data directory.
-            delete_zip (bool, optional): Whether to delete the zip file after extraction. Defaults to False.
-
-        Raises:
-            FileNotFoundError: If the zip file does not exist.
-            RuntimeError: If extraction fails.
-
-        Examples:
-
-            >>> store = AutoStore(Path.home() / "data")
-            >>> store.unzip("backup.zip", delete_zip=True)  # Unzips and deletes the zip file
-            >>> store.unzip("backup.zip")  # Unzips backup.zip into the current data directory
-            >>> store.unzip("backup.zip", output_dir=ds.data_dir / "extracted")  # Unzips to a specified directory
-        """
-        zip_path = Path(zip_path)
-        if not zip_path.exists() or not zip_path.is_file():
-            raise FileNotFoundError(f"Zip file not found: {zip_path}")
-
-        if output_dir is None:
-            output_dir = self.data_dir
-        else:
-            output_dir = Path(output_dir)
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zipf:
-                zipf.extractall(output_dir)
-        except Exception as e:
-            raise RuntimeError(f"Failed to unzip {zip_path}: {str(e)}") from e
-        finally:
-            if delete_zip and zip_path.exists():
-                zip_path.unlink()
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        if hasattr(self, "backend"):
+            self.backend.cleanup()
 
 
 def config(key: str, cast: t.Callable = None, default: t.Any = None) -> t.Any:
-    """
-    Get a configuration value from environment variables.
-
-    Args:
-        key (str): Environment variable name.
-        cast (Callable): Type to cast the value to.
-        default (Any): Default value if the environment variable is not found.
-
-    Example:
-
-        Read an environment variable:
-
-        ```python
-        from pypertext import config
-
-        DEBUG = config("DEBUG", cast=bool, default=False)
-        ```
-    """
+    """Get a configuration value from environment variables."""
     if key in os.environ:
         value = os.environ[key]
         if cast is None or value is None:
@@ -1157,9 +1509,7 @@ def config(key: str, cast: t.Callable = None, default: t.Any = None) -> t.Any:
 
 
 def _walk_to_root(path: str) -> t.Iterator[str]:
-    """
-    Yield directories starting from the given directory up to the root
-    """
+    """Yield directories starting from the given directory up to the root"""
     if not os.path.exists(path):
         raise IOError("Starting path not found")
 
@@ -1175,18 +1525,7 @@ def _walk_to_root(path: str) -> t.Iterator[str]:
 
 
 def find_dotenv(filename: str = ".env", raise_error_if_not_found: bool = False, usecwd: bool = False) -> str:
-    """
-    Search in increasingly higher folders for the given file. Returns path to the file if found, or an empty
-    string otherwise.
-
-    Args:
-        filename (str): The name of the file to search for. Defaults to ".env".
-        raise_error_if_not_found (bool): If True, raises an IOError if the file is not found. Defaults to False.
-        usecwd (bool): If True, uses the current working directory as the starting point for the search. Defaults to False.
-
-    Returns:
-        str: The path to the file if found, or an empty string if not found.
-    """
+    """Search in increasingly higher folders for the given file."""
 
     def _is_interactive():
         """Decide whether this is running in a REPL or IPython notebook"""
@@ -1197,10 +1536,8 @@ def find_dotenv(filename: str = ".env", raise_error_if_not_found: bool = False, 
         return not hasattr(main, "__file__")
 
     if usecwd or _is_interactive() or getattr(sys, "frozen", False):
-        # Should work without __file__, e.g. in REPL or IPython notebook.
         path = os.getcwd()
     else:
-        # will work for .py files
         frame = sys._getframe()
         current_file = __file__
 
@@ -1223,25 +1560,7 @@ def find_dotenv(filename: str = ".env", raise_error_if_not_found: bool = False, 
 
 
 def load_dotenv(dotenv_path: str = None, override: bool = True, encoding: str = "utf-8") -> None:
-    """
-    Load environment variables from a .env file into os.environ.
-
-    Args:
-        dotenv_path (str): Path to the .env file. If not provided, will default to searching for .env in the current
-            directory and all parent directories.
-        override (bool): Whether to override existing environment variables.
-        encoding (str): The encoding of the .env file. Defaults to 'utf-8'.
-
-    Example:
-        Load environment variables from a .env file:
-
-        ```python
-        from pypertext import load_dotenv
-
-        load_dotenv()  # Load from the default .env file in the current directory
-        load_dotenv("config.env")  # Load from a specific file
-        ```
-    """
+    """Load environment variables from a .env file into os.environ."""
     if dotenv_path is None:
         dotenv_path = find_dotenv()
 
@@ -1321,26 +1640,7 @@ def load_dotenv(dotenv_path: str = None, override: bool = True, encoding: str = 
 
 
 def setup_logging(level: int = None, file: str = None, disable_stdout: bool = False):
-    """Setup logging.
-
-    Args:
-        level (int, optional): The logging level. Defaults to logging.INFO.
-        file (str, optional): The path to the log file. Defaults to None.
-        disable_stdout (bool, optional): Whether to disable stdout logging. Defaults to False.
-
-    Example:
-
-        Setup logging to a file and disable stdout logging:
-
-        ```python
-        import logging
-        from pypertext import setup_logging
-
-        setup_logging(level=logging.DEBUG)
-        setup_logging(file="logs/app.log", disable_stdout=True)
-        setup_logging(level="DEBUG", file="logs/app.log", disable_stdout=True)
-        ```
-    """
+    """Setup logging."""
     if level is None:
         level = logging.INFO
     if isinstance(level, str):
