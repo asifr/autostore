@@ -26,19 +26,19 @@ pip install autostore
 ### Basic Usage
 
 ```python
-from autostore import AutoStore, LocalFileConfig
+from autostore import AutoStore
 
 store = AutoStore("./data")
 
 # Write data - automatically saves with appropriate extensions
-store["my_dataframe"] = df           # Automatically saves as .parquet
-store["config"] = {"key": "value"}   # Automatically saves as .json
-store["logs"] = [{"event": "start"}] # Automatically saves as .jsonl
+store["my_dataframe"] = df           # ./data/my_dataframe.parquet
+store["config"] = {"key": "value"}   # ./data/config.json
+store["logs"] = [{"event": "start"}] # ./data/logs.jsonl
 
-# Read data - uses cache when available
-df = store["my_dataframe"]           # Loads and returns the DataFrame
-config = store["config"]             # Loads and returns the config dict
-logs = store["logs"]                 # Loads and returns the list of logs
+# Read data
+df = store["my_dataframe"]           # Returns a Polars DataFrame
+config = store["config"]             # Returns a dict
+logs = store["logs"]                 # Returns a list of dicts
 ```
 
 ### Cloud Storage (S3)
@@ -126,8 +126,8 @@ print(f"ETag: {metadata.etag}")
 Add support for new data types by creating custom handlers:
 
 ```python
-from autostore import DataHandler
 from pathlib import Path
+from autostore.autostore import DataHandler
 
 class CustomLogHandler(DataHandler):
     def can_handle_extension(self, extension: str) -> bool:
@@ -209,25 +209,9 @@ local_store = AutoStore("./data")
 
 # S3 storage
 s3_store = AutoStore("s3://bucket/prefix/")
-
-# Future backends (when implemented)
-# gcs_store = AutoStore("gcs://bucket/prefix/")
-# azure_store = AutoStore("azure://container/prefix/")
 ```
 
 ## Performance Considerations
-
-### Caching Benefits
-
-For cloud storage (especially S3), caching provides significant performance improvements:
-
-```python
-# First access - downloads from S3
-data = store["large_dataset"]  # ~2.5 seconds
-
-# Subsequent access - loads from cache
-data = store["large_dataset"]  # ~0.1 seconds (25x faster!)
-```
 
 ### Large File Handling
 
