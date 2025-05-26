@@ -628,7 +628,7 @@ class ParquetHandler(DataHandler):
         try:
             import polars as pl
 
-            return pl.read_parquet(file_path)
+            return pl.scan_parquet(file_path)
         except ImportError:
             raise ImportError("Polars is required to load .parquet files")
 
