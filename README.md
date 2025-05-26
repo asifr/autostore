@@ -162,5 +162,6 @@ Don't choose AutoStore when:
 
 ## Changes
 
+-   0.1.2 - config, setup_logging, and load_dotenv are now imported at the module top level
 -   0.1.1 - Added config, setup_logging, and load_dotenv
 -   0.1.0 - Initial release
