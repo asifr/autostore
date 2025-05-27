@@ -57,10 +57,12 @@ s3_config = S3StorageConfig(
     cache_expiry_hours=12,
     multipart_threshold=64 * 1024 * 1024  # 64MB
 )
-
-# Use S3 storage
 store = AutoStore("s3://my-bucket/data/", config=s3_config)
+
+# Write data to S3
 store["experiment/results"] = {"accuracy": 0.95, "epochs": 100}
+
+# Read data from S3
 results = store["experiment/results"]  # Uses cache on subsequent loads
 ```
 
@@ -104,12 +106,11 @@ config = S3StorageConfig(
 
 ### Caching System
 
-AutoStore includes an intelligent caching system that:
+AutoStore includes an caching system for S3 that:
 
 -   Stores frequently accessed files locally
 -   Uses ETags for cache validation
 -   Automatically expires old cache entries
--   Significantly improves performance for cloud storage
 
 ```python
 # Cache management
@@ -256,6 +257,7 @@ Don't choose AutoStore when:
 
 ## Changes
 
+-   0.1.4 - parquet and csv are loaded as LazyFrames by default and sparse matrices are now saved as .sparse.npz
 -   0.1.3
     -   Refactored to use different storage backends including local file system and S3.
     -   Implement S3 storage backend with basic operations

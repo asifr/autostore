@@ -5,6 +5,7 @@ License: Apache License 2.0
 
 Changes
 -------
+- 0.1.4 - parquet and csv are loaded as LazyFrames by default and sparse matrices are now saved as .sparse.npz
 - 0.1.3
     - Refactored to use different storage backends including local file system and S3.
     - Included methods for file operations: upload, download, delete, copy, move, and list files.
@@ -674,7 +675,7 @@ class CSVHandler(DataHandler):
         try:
             import polars as pl
 
-            return pl.read_csv(file_path, truncate_ragged_lines=True)
+            return pl.scan_csv(file_path, truncate_ragged_lines=True)
         except ImportError:
             raise ImportError("Polars is required to load .csv files")
 
@@ -922,7 +923,7 @@ class SparseHandler(DataHandler):
     """Handler for SciPy sparse matrices."""
 
     def can_handle_extension(self, extension: str) -> bool:
-        return extension.lower() == ".sparse"
+        return extension.lower() == ".sparse.npz"
 
     def can_handle_data(self, data: t.Any) -> bool:
         try:
@@ -954,7 +955,7 @@ class SparseHandler(DataHandler):
 
     @property
     def extensions(self) -> t.List[str]:
-        return [".sparse"]
+        return [".sparse.npz"]
 
     @property
     def priority(self) -> int:
