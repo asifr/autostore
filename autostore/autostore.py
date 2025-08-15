@@ -5,6 +5,7 @@ License: Apache License 2.0
 
 Changes
 -------
+- 0.1.5 - added StorePath to use the Autostore instance in path-like operations
 - 0.1.4 - parquet and csv are loaded as LazyFrames by default and sparse matrices are now saved as .sparse.npz
 - 0.1.3
     - Refactored to use different storage backends including local file system and S3.
@@ -23,10 +24,9 @@ import io
 import re
 import sys
 import json
-import codecs
 import pickle
 import shutil
-import xxhash
+import hashlib
 import logging
 import tempfile
 import contextlib
@@ -71,9 +71,9 @@ def hash_obj(obj: str, seed: int = 123) -> str:
     if isinstance(obj, dict):
         obj = json.dumps(obj, sort_keys=True)
     if not isinstance(obj, str):
-        logging.warning(f"Object {obj} cannot be serialized, using its ID for hashing.")
+        log.warning(f"Object {obj} cannot be serialized, using its ID for hashing.")
         obj = str(id(obj))
-    return xxhash.xxh3_64_hexdigest(obj, seed=seed)
+    return hashlib.md5(f"{seed}:{obj}".encode('utf-8')).hexdigest()
 
 
 @dataclass
@@ -251,9 +251,9 @@ class StorageBackend(ABC):
         self._temp_dir = None
 
         # Initialize cache manager if caching is enabled
-        self.cache_manager: CacheManager = None
+        self.cache_manager = None
         if config.cache_enabled:
-            self.cache_manager: CacheManager = CacheManager(
+            self.cache_manager = CacheManager(
                 cache_dir=config.cache_dir,
                 expiry_hours=config.cache_expiry_hours,
             )
@@ -349,6 +349,15 @@ class StorageBackend(ABC):
 
     def is_directory(self, path: str) -> bool:
         """Check if a path represents a directory."""
+        # For LocalFileBackend, we can check directly
+        if hasattr(self, '_get_full_path'):
+            try:
+                full_path = self._get_full_path(path)
+                return full_path.is_dir()
+            except Exception:
+                return False
+        
+        # Fallback for other backends - check if we can list files in it
         try:
             next(self.list_files(f"{path.rstrip('/')}/*", recursive=False))
             return True
@@ -1183,12 +1192,104 @@ class HandlerRegistry:
         return list(self._extension_map.keys())
 
 
+class StorePath:
+    """
+    Path-like object for AutoStore that supports the / operator using pathlib.Path.
+    """
+    
+    def __init__(self, store: 'AutoStore', path: t.Union[str, Path] = ""):
+        self.store = store
+        # Use pathlib.Path for proper path handling, normalize separators
+        if isinstance(path, str):
+            # Replace backslashes with forward slashes and strip leading/trailing slashes
+            path = path.replace("\\", "/").strip("/")
+        self._path = Path(path) if path else Path()
+    
+    @property
+    def path(self) -> str:
+        """Return the path as a string with forward slashes for backend compatibility."""
+        # Convert to POSIX-style path for backend compatibility (works for S3, local, etc.)
+        return str(self._path.as_posix()) if str(self._path) != "." else ""
+    
+    def __truediv__(self, other: t.Union[str, Path]) -> 'StorePath':
+        """Support store / "path" / "file.ext" syntax using pathlib.Path."""
+        new_path = self._path / other
+        return StorePath(self.store, new_path)
+    
+    def __getitem__(self, key: str) -> t.Any:
+        """Load data from this path + key."""
+        full_key = self._get_full_key(key)
+        return self.store[full_key]
+    
+    def __setitem__(self, key: str, value: t.Any) -> None:
+        """Save data to this path + key."""
+        full_key = self._get_full_key(key)
+        self.store[full_key] = value
+    
+    def __contains__(self, key: str) -> bool:
+        """Check if key exists at this path."""
+        full_key = self._get_full_key(key)
+        return full_key in self.store
+    
+    def __delitem__(self, key: str) -> None:
+        """Delete key at this path."""
+        full_key = self._get_full_key(key)
+        del self.store[full_key]
+    
+    def _get_full_key(self, key: str) -> str:
+        """Get the full key by combining path and key."""
+        if not key:
+            return self.path
+        
+        if self.path:
+            # Use pathlib to join paths properly
+            full_path = self._path / key
+            return full_path.as_posix()
+        else:
+            return key
+    
+    def exists(self, key: str = "") -> bool:
+        """Check if path or path + key exists."""
+        full_key = self._get_full_key(key)
+        return self.store.exists(full_key) if full_key else True
+    
+    def list_files(self, pattern: str = "*", recursive: bool = True) -> t.Iterator[str]:
+        """List files at this path matching pattern."""
+        if self.path:
+            # Use pathlib to construct the pattern
+            full_pattern = (self._path / pattern).as_posix()
+        else:
+            full_pattern = pattern
+            
+        for file_path in self.store.list_files(full_pattern, recursive):
+            # Return relative paths from this StorePath
+            if self.path:
+                file_posix_path = Path(file_path).as_posix()
+                base_posix_path = self._path.as_posix()
+                if file_posix_path.startswith(base_posix_path + "/"):
+                    yield file_posix_path[len(base_posix_path) + 1:]
+            else:
+                yield file_path
+    
+    def get_metadata(self, key: str = "") -> FileMetadata:
+        """Get metadata for this path or path + key."""
+        full_key = self._get_full_key(key)
+        return self.store.get_metadata(full_key)
+    
+    def __str__(self) -> str:
+        return self.path
+    
+    def __repr__(self) -> str:
+        return f"StorePath('{self.path}')"
+
+
 class AutoStore:
     """
     Read and write files like a dictionary with pluggable storage backends.
 
     Now uses upload/download operations with caching and dataclass configs.
     Optimized for local file access without unnecessary copying.
+    Supports path-like operations with the / operator.
     """
 
     def __init__(
@@ -1279,6 +1380,14 @@ class AutoStore:
                 test_key = key + ext
                 if self.backend.exists(test_key):
                     return test_key
+        else:
+            # If the extension is unsupported, check if it was stored as pickle
+            ext = Path(key).suffix.lower()
+            if not self.handler_registry.get_handler_for_extension(ext):
+                # Try with .pkl extension (fallback handler)
+                pkl_key = str(Path(key).with_suffix(".pkl"))
+                if self.backend.exists(pkl_key):
+                    return pkl_key
 
         # If still not found, raise an error instead of doing expensive iteration
         raise StorageFileNotFoundError(f"No file found for key: {key}")
@@ -1405,11 +1514,10 @@ class AutoStore:
         for file_path in self.backend.list_files():
             if Path(file_path).suffix.lower() in supported_extensions:
                 file_path_no_ext = str(Path(file_path).with_suffix(""))
-
-                for key in file_path_no_ext:
-                    if key not in seen:
-                        seen.add(key)
-                        yield key
+                
+                if file_path_no_ext not in seen:
+                    seen.add(file_path_no_ext)
+                    yield file_path_no_ext
 
     def list_files(self, pattern: str = "*", recursive: bool = True) -> t.Iterator[str]:
         """List files matching a pattern."""
@@ -1484,6 +1592,10 @@ class AutoStore:
         """Clean up resources."""
         if hasattr(self, "backend"):
             self.backend.cleanup()
+    
+    def __truediv__(self, path: str) -> StorePath:
+        """Support store / "path" syntax to create a StorePath."""
+        return StorePath(self, path)
 
 
 def config(key: str, cast: t.Callable = None, default: t.Any = None) -> t.Any:
@@ -1621,14 +1733,14 @@ def load_dotenv(dotenv_path: str = None, override: bool = True, encoding: str = 
 
             if _single_quoted_value.match(value):
                 value = _single_quoted_value.sub(r"\1", value)
-                value = _single_quote_escapes.sub(r"\1", value)
+                value = _single_quote_escapes.sub(lambda m: m.group()[1:], value)
             elif _double_quoted_value.match(value):
                 value = _double_quoted_value.sub(r"\1", value)
-                value = codecs.decode(value.encode("utf-8"), "unicode_escape")
+                value = _double_quote_escapes.sub(_double_quote_escape, value)
             elif _unquoted_value.match(value):
                 value = _unquoted_value.sub(r"\1", value)
                 value = _double_quote_escapes.sub(_double_quote_escape, value)
-                value = _whitespace.sub("", value)
+                value = value.strip()
             else:
                 raise ValueError(f"Line {line} does not match format KEY=VALUE")
             envvars[key] = value

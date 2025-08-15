@@ -109,6 +109,12 @@ cmd_publish() {
 }
 defhelp publish 'Publish distribution.'
 
+cmd_tests() {
+    echo "Running tests..."
+    source .venv/bin/activate; python -m pytest tests/ "$@"
+}
+defhelp tests 'Run tests with pytest.'
+
 # -----------------------------------------------------------------------------
 # Core script logic
 # -----------------------------------------------------------------------------
