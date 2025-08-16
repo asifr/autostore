@@ -104,7 +104,7 @@ AutoStore.register_scheme("digitalocean", "autostore.s3")
 aws_options = S3Options(
     scheme="s3",
     profile_name="aws-production",
-    region_name="us-east-1", 
+    region_name="us-east-1",
     cache_enabled=True
 )
 
@@ -131,7 +131,7 @@ store = AutoStore(
 
 # Each scheme automatically uses its appropriate configuration
 store["s3://aws-bucket/data.json"] = {"source": "aws"}
-store["minio://my-bucket/data.json"] = {"source": "minio"}  
+store["minio://my-bucket/data.json"] = {"source": "minio"}
 store["digitalocean://my-space/data.json"] = {"source": "digitalocean"}
 
 # Cross-backend data access with automatic option selection
@@ -200,7 +200,7 @@ from autostore import Options
 base_options = Options(
     cache_enabled=True,           # Enable local caching
     cache_dir="./cache",          # Custom cache directory
-    cache_expiry_hours=12,        # Cache expiration time
+    cache_expiry_hours=12,        # Cache expiration time (0 = never expire)
     timeout=30,                   # Request timeout in seconds
     max_retries=3,                # Maximum retry attempts
     retry_delay=1.0               # Delay between retries
@@ -215,7 +215,7 @@ from autostore.s3 import S3Options
 s3_options = S3Options(
     # Scheme specification for multi-backend support
     scheme="s3",                          # URI scheme this options applies to
-    
+
     # Authentication
     aws_access_key_id="your-key",
     aws_secret_access_key="your-secret",
@@ -232,7 +232,7 @@ s3_options = S3Options(
 
     # Inherited from Options
     cache_enabled=True,
-    cache_expiry_hours=6
+    cache_expiry_hours=6          # 0 = never expire
 )
 ```
 
@@ -299,12 +299,15 @@ AutoStore includes caching that:
 
 -   Stores frequently accessed files locally
 -   Uses ETags for cache validation
--   Automatically expires old cache entries
+-   Automatically expires old cache entries (or never expires if cache_expiry_hours=0)
 -   Works across all backends
 
 ```python
 # Enable caching for any backend
 store = AutoStore("s3://bucket/", cache_enabled=True, cache_expiry_hours=6)
+
+# Never expire cache entries (useful for immutable data)
+store = AutoStore("s3://bucket/", cache_enabled=True, cache_expiry_hours=0)
 
 # Cache management
 store.cleanup_cache()  # Remove expired cache entries
@@ -464,6 +467,7 @@ Don't choose AutoStore when:
 
 ## Changes
 
+-   0.1.7 - Cache expiry can be set to 0 to never expire cache entries.
 -   0.1.6 - Scheme-based backend detection and Options system with automatic backend detection from URI schemes
     -   Unified Options dataclass system replacing separate config classes
     -   Cross-backend access from single store instance

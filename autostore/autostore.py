@@ -5,6 +5,7 @@ License: Apache License 2.0
 
 Changes
 -------
+- 0.1.7 - Cache expiry can be set to 0 to never expire cache entries.
 - 0.1.6 - Added Options and a new backend registry for auto-discovery of storage backends.
 - 0.1.5 - added StorePath to use the Autostore instance in path-like operations
 - 0.1.4 - parquet and csv are loaded as LazyFrames by default and sparse matrices are now saved as .sparse.npz
@@ -96,7 +97,7 @@ class Options:
 
     cache_enabled: bool = False
     cache_dir: t.Optional[str] = None
-    cache_expiry_hours: int = 24
+    cache_expiry_hours: int = 24  # Set to 0 to never expire cache entries
     timeout: int = 30
     max_retries: int = 3
     retry_delay: float = 1.0
@@ -181,6 +182,8 @@ class CacheManager:
 
     def _is_expired(self, entry: CacheEntry) -> bool:
         """Check if cache entry is expired."""
+        if self.expiry_hours == 0:
+            return False  # Never expire when expiry_hours is 0
         expiry_time = entry.created_time + timedelta(hours=self.expiry_hours)
         return datetime.now() > expiry_time
 
