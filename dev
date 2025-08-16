@@ -98,8 +98,7 @@ defhelp setup 'Set up Python virtual environment.'
 cmd_build() {
     echo "Building package..."
 	rm -rf ./dist
-	source .venv/bin/activate; uv pip install build
-	source .venv/bin/activate; python -m build --outdir ./dist
+	source .venv/bin/activate; uv run python -m build --outdir ./dist
 }
 defhelp build 'Build distribution.'
 
