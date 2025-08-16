@@ -467,6 +467,7 @@ Don't choose AutoStore when:
 
 ## Changes
 
+-   0.1.8 - Auto scheme registration enhancement
 -   0.1.7 - Cache expiry can be set to 0 to never expire cache entries.
 -   0.1.6 - Scheme-based backend detection and Options system with automatic backend detection from URI schemes
     -   Unified Options dataclass system replacing separate config classes

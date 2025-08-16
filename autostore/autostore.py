@@ -1498,6 +1498,41 @@ class AutoStore:
     dataset support, and cross-backend access capabilities.
     """
 
+    @classmethod
+    def _get_backend_module_for_options(cls, options: Options) -> t.Optional[str]:
+        """Get the backend module path for an options instance."""
+        # Map options classes to their backend modules
+        options_to_module = {
+            'S3Options': 'autostore.s3',
+            # Future: add other backend options here
+            # 'GCSOptions': 'autostore.gcs',
+            # 'AzureOptions': 'autostore.azure',
+        }
+        
+        options_class_name = options.__class__.__name__
+        return options_to_module.get(options_class_name)
+
+    def _auto_register_schemes_from_options(self, options: t.Union[Options, t.List[Options], None]) -> None:
+        """Auto-register schemes from provided options."""
+        if options is None:
+            return
+            
+        options_list = options if isinstance(options, list) else [options]
+        
+        for opt in options_list:
+            # Check if this options instance has a scheme attribute
+            if hasattr(opt, 'scheme') and opt.scheme:
+                scheme = opt.scheme.lower()
+                
+                # Only register if not already registered
+                if not _backend_registry.get_backend_class(scheme):
+                    module_path = self._get_backend_module_for_options(opt)
+                    if module_path:
+                        log.debug(f"Auto-registering scheme '{scheme}' to module '{module_path}'")
+                        _backend_registry.register_scheme(scheme, module_path)
+                    else:
+                        log.warning(f"Cannot auto-register scheme '{scheme}': unknown options class {opt.__class__.__name__}")
+
     def __init__(self, storage_uri: t.Union[str, Path], options: t.Union[Options, t.List[Options], None] = None, **kwargs):
         """
         Initialize AutoStore with automatic backend detection.
@@ -1528,6 +1563,9 @@ class AutoStore:
             if options:
                 self._options_registry.register_options(options)
             primary_options = options
+
+        # Auto-register schemes from options before attempting backend lookup
+        self._auto_register_schemes_from_options(options)
 
         # Parse URI to determine backend
         parsed_uri = urlparse(storage_uri)
