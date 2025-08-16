@@ -65,6 +65,12 @@ class S3Options(Options):
     # Dataset Support
     enable_dataset_detection: bool = True
     dataset_cache_strategy: str = "preserve_structure"  # "preserve_structure" or "flatten"
+    
+    def __post_init__(self):
+        # Set the backend class after initialization
+        if self.backend_class is None:
+            # Import here to avoid circular imports
+            self.backend_class = S3Backend
 
 
 warnings.filterwarnings("ignore")
@@ -165,7 +171,6 @@ class S3Backend(StorageBackend):
 
         # Parse S3 URI - accept any scheme since this backend can handle S3-compatible services
         parsed = urlparse(uri)
-        self.scheme = parsed.scheme
         if not parsed.scheme:
             raise ValueError("URI must include a scheme (e.g., s3://, conductor://)")
 
@@ -551,6 +556,10 @@ class S3Backend(StorageBackend):
                         filename = Path(obj_key).name
                         if not fnmatch.fnmatch(filename, file_pattern):
                             continue
+                    
+                    # For parquet datasets, only download .parquet files
+                    if file_pattern == "*.parquet" and not obj_key.endswith(".parquet"):
+                        continue
 
                     # Calculate local path preserving S3 structure
                     rel_path = obj_key[len(full_prefix) :].lstrip("/")

@@ -102,6 +102,7 @@ class Options:
     max_retries: int = 3
     retry_delay: float = 1.0
     temp_dir: t.Optional[str] = None
+    backend_class: t.Optional[t.Type['StorageBackend']] = None
 
 
 @dataclass
@@ -649,77 +650,11 @@ class OptionsRegistry:
 
 
 class BackendRegistry:
-    """Registry for managing storage backends with auto-discovery."""
+    """Registry for managing storage backends through options only."""
 
-    def __init__(self):
-        self._backends: t.Dict[str, t.Type[StorageBackend]] = {}
-        self._backend_modules: t.Dict[str, str] = {
-            "s3": "autostore.s3",
-            "file": None,  # Built-in
-            "": None,  # Built-in (local)
-        }
-        self._register_default_backends()
-
-    def _register_default_backends(self):
-        """Register default backends."""
-        self.register("file", LocalFileBackend)
-        self.register("", LocalFileBackend)  # Empty scheme defaults to local
-
-    def register(self, scheme: str, backend_class: t.Type[StorageBackend]) -> None:
-        """Register a backend for a URI scheme."""
-        self._backends[scheme.lower()] = backend_class
-
-    def unregister(self, scheme: str) -> None:
-        """Unregister a backend scheme."""
-        self._backends.pop(scheme.lower(), None)
-
-    def get_backend_class(self, scheme: str) -> t.Optional[t.Type[StorageBackend]]:
-        """Get backend class with automatic loading."""
-        scheme = scheme.lower()
-
-        # Return if already loaded
-        if scheme in self._backends:
-            return self._backends[scheme]
-
-        # Auto-load backend module
-        if scheme in self._backend_modules:
-            module_name = self._backend_modules[scheme]
-            if module_name:
-                try:
-                    backend_class = self._load_backend_module(module_name, scheme)
-                    self._backends[scheme] = backend_class
-                    return backend_class
-                except ImportError as e:
-                    raise BackendNotAvailableError(
-                        f"Backend '{scheme}' requires additional dependencies. "
-                        f"Install with: pip install autostore[{scheme}]"
-                    ) from e
-
-        return self._backends.get(scheme)
-
-    def _load_backend_module(self, module_name: str, scheme: str) -> t.Type[StorageBackend]:
-        """Dynamically load backend module."""
-        module = importlib.import_module(module_name)
-
-        # Convention: {Scheme}Backend class name
-        backend_class_name = f"{scheme.upper()}Backend"
-        if hasattr(module, backend_class_name):
-            return getattr(module, backend_class_name)
-
-        # Fallback naming conventions
-        for name in [f"{scheme.title()}Backend", f"{scheme}Backend"]:
-            if hasattr(module, name):
-                return getattr(module, name)
-
-        raise ImportError(f"No backend class found in {module_name}")
-
-    def register_scheme(self, scheme: str, module_path: str) -> None:
-        """Register a new scheme with its module path."""
-        self._backend_modules[scheme.lower()] = module_path
-
-    def get_supported_schemes(self) -> t.List[str]:
-        """Get list of supported URI schemes."""
-        return list(self._backend_modules.keys())
+    def get_backend_class_for_options(self, options: Options) -> t.Optional[t.Type[StorageBackend]]:
+        """Get backend class based on options backend_class attribute."""
+        return options.backend_class
 
 
 # Global backend registry
@@ -1512,26 +1447,6 @@ class AutoStore:
         options_class_name = options.__class__.__name__
         return options_to_module.get(options_class_name)
 
-    def _auto_register_schemes_from_options(self, options: t.Union[Options, t.List[Options], None]) -> None:
-        """Auto-register schemes from provided options."""
-        if options is None:
-            return
-            
-        options_list = options if isinstance(options, list) else [options]
-        
-        for opt in options_list:
-            # Check if this options instance has a scheme attribute
-            if hasattr(opt, 'scheme') and opt.scheme:
-                scheme = opt.scheme.lower()
-                
-                # Only register if not already registered
-                if not _backend_registry.get_backend_class(scheme):
-                    module_path = self._get_backend_module_for_options(opt)
-                    if module_path:
-                        log.debug(f"Auto-registering scheme '{scheme}' to module '{module_path}'")
-                        _backend_registry.register_scheme(scheme, module_path)
-                    else:
-                        log.warning(f"Cannot auto-register scheme '{scheme}': unknown options class {opt.__class__.__name__}")
 
     def __init__(self, storage_uri: t.Union[str, Path], options: t.Union[Options, t.List[Options], None] = None, **kwargs):
         """
@@ -1564,19 +1479,29 @@ class AutoStore:
                 self._options_registry.register_options(options)
             primary_options = options
 
-        # Auto-register schemes from options before attempting backend lookup
-        self._auto_register_schemes_from_options(options)
-
         # Parse URI to determine backend
         parsed_uri = urlparse(storage_uri)
         scheme = parsed_uri.scheme.lower() if parsed_uri.scheme else ""
 
-        # Auto-detect and load backend
+        # Auto-detect and load backend from options only
         try:
-            backend_class = _backend_registry.get_backend_class(scheme)
+            backend_class = None
+            
+            # Determine backend from options type - this is the only way now
+            if primary_options:
+                backend_class = _backend_registry.get_backend_class_for_options(primary_options)
+            
+            # Special case: local file backend for empty scheme (built-in)
+            if not backend_class and scheme in ("", "file"):
+                backend_class = LocalFileBackend
+            
             if not backend_class:
-                supported = _backend_registry.get_supported_schemes()
-                raise UnsupportedSchemeError(f"Unsupported storage scheme: '{scheme}'. Supported schemes: {supported}")
+                available_options = [opt.__class__.__name__ for opt in options if hasattr(opt, 'backend_class')]
+                raise UnsupportedSchemeError(
+                    f"No backend available for scheme '{scheme}'. "
+                    f"Available options classes: {available_options}. "
+                    f"Make sure to provide options with backend_class set."
+                )
 
             # Create or merge options
             resolved_options = self._create_backend_options(backend_class, primary_options, **kwargs)
@@ -1646,20 +1571,6 @@ class AutoStore:
         else:
             return options
 
-    @classmethod
-    def get_supported_backends(cls) -> t.List[str]:
-        """Get list of supported backend schemes."""
-        return _backend_registry.get_supported_schemes()
-    
-    @classmethod
-    def register_scheme(cls, scheme: str, module_path: str) -> None:
-        """Register a new URI scheme to use a specific backend module.
-        
-        Args:
-            scheme: URI scheme (e.g., 'conductor', 'minio')
-            module_path: Python module path (e.g., 'autostore.s3')
-        """
-        _backend_registry.register_scheme(scheme, module_path)
 
     def register_handler(self, handler: DataHandler) -> None:
         """Register a custom data handler."""
@@ -1752,14 +1663,30 @@ class AutoStore:
         parsed_uri = urlparse(uri)
         # Remove the scheme and netloc to get the relative path
         relative_path = parsed_uri.path.lstrip("/")
+        
+        # Parse query parameters for format specification
+        format_override = None
         if parsed_uri.query:
-            relative_path += "?" + parsed_uri.query
+            from urllib.parse import parse_qs
+            query_params = parse_qs(parsed_uri.query)
+            if 'format' in query_params:
+                format_override = query_params['format'][0]
 
         # Use the backend's normal loading process
-        if backend.is_directory(relative_path):
-            return self._load_dataset_from_backend(relative_path, backend)
+        # Special handling for parquet: check if single file or dataset
+        if format_override == "parquet":
+            # First check if it's definitely a dataset (multiple files)
+            if backend.is_dataset(relative_path):
+                return self._load_dataset_from_backend(relative_path, backend, format_override)
+            else:
+                # Try as single file first (more common for files without extensions)
+                return self._load_file_from_backend(relative_path, backend, format_override)
         else:
-            return self._load_file_from_backend(relative_path, backend)
+            # Normal logic for other formats
+            if backend.is_directory(relative_path):
+                return self._load_dataset_from_backend(relative_path, backend, format_override)
+            else:
+                return self._load_file_from_backend(relative_path, backend, format_override)
 
     def _load_from_primary(self, key: str) -> t.Any:
         """Load data from primary backend."""
@@ -1797,15 +1724,23 @@ class AutoStore:
 
         raise StorageFileNotFoundError(f"No file or dataset found for key: {key}")
 
-    def _load_file_from_backend(self, file_path: str, backend: StorageBackend) -> t.Any:
+    def _load_file_from_backend(self, file_path: str, backend: StorageBackend, format_override: t.Optional[str] = None) -> t.Any:
         """Load a single file from a backend."""
         # Get file extension to determine handler
         ext = Path(file_path).suffix.lower()
+        
+        # Use format override if provided and no extension
+        if format_override and not ext:
+            ext = f".{format_override.lstrip('.')}"
+        
         handler = self.handler_registry.get_handler_for_extension(ext)
 
         if not handler:
             supported = ", ".join(self.handler_registry.get_supported_extensions())
-            raise ValueError(f"Unsupported file type: {ext}. Supported types: {supported}")
+            if format_override:
+                raise ValueError(f"Unsupported format: {format_override}. Supported types: {supported}")
+            else:
+                raise ValueError(f"Unsupported file type: {ext}. Supported types: {supported}")
 
         # Download file (with caching)
         local_file_path = backend.download_with_cache(file_path)
@@ -1813,37 +1748,58 @@ class AutoStore:
         # Use handler to deserialize from file
         return handler.read_from_file(local_file_path, ext)
 
-    def _load_dataset_from_backend(self, dataset_path: str, backend: StorageBackend) -> t.Any:
+    def _load_dataset_from_backend(self, dataset_path: str, backend: StorageBackend, format_override: t.Optional[str] = None) -> t.Any:
         """Load data from a dataset."""
         # Download/cache entire dataset locally
-        local_dataset_path = self._cache_dataset(dataset_path, backend)
+        local_dataset_path = self._cache_dataset(dataset_path, backend, format_override)
 
         # Find appropriate handler for dataset
-        handler = self._find_dataset_handler(local_dataset_path)
+        handler = self._find_dataset_handler(local_dataset_path, format_override)
         if not handler:
-            raise ValueError(f"No handler found for dataset at: {dataset_path}")
+            format_hint = f" (format: {format_override})" if format_override else ""
+            raise ValueError(f"No handler found for dataset at: {dataset_path}{format_hint}")
 
         # Load using handler
         return handler.read_dataset(local_dataset_path)
 
-    def _cache_dataset(self, dataset_path: str, backend: StorageBackend) -> Path:
+    def _cache_dataset(self, dataset_path: str, backend: StorageBackend, format_override: t.Optional[str] = None) -> Path:
         """Cache entire dataset locally, preserving structure."""
         cache_manager = backend.cache_manager
         if not cache_manager:
             # No caching - use temp directory
             temp_dir = backend.get_temp_dir() / f"dataset_{hash_obj(dataset_path)}"
             temp_dir.mkdir(exist_ok=True)
-            backend.download_dataset(dataset_path, temp_dir)
+            
+            # Use appropriate file pattern for download
+            file_pattern = "*"
+            if format_override == "parquet":
+                file_pattern = "*.parquet"
+            
+            backend.download_dataset(dataset_path, temp_dir, file_pattern)
             return temp_dir
 
         # For now, use temp directory (could be enhanced with proper dataset caching)
         temp_dir = cache_manager.get_temp_dir() / f"dataset_{hash_obj(dataset_path)}"
         temp_dir.mkdir(exist_ok=True)
-        backend.download_dataset(dataset_path, temp_dir)
+        
+        # Use appropriate file pattern for download
+        file_pattern = "*"
+        if format_override == "parquet":
+            file_pattern = "*.parquet"
+            
+        backend.download_dataset(dataset_path, temp_dir, file_pattern)
         return temp_dir
 
-    def _find_dataset_handler(self, dataset_path: Path) -> t.Optional[DataHandler]:
+    def _find_dataset_handler(self, dataset_path: Path, format_override: t.Optional[str] = None) -> t.Optional[DataHandler]:
         """Find handler that can process the dataset."""
+        # If format override is provided, try to find handler for that format first
+        if format_override:
+            ext = f".{format_override.lstrip('.')}"
+            handler = self.handler_registry.get_handler_for_extension(ext)
+            if handler and hasattr(handler, "can_handle_dataset"):
+                return handler
+        
+        # Default behavior: find handler that can handle the dataset
         for handler in self.handler_registry._handlers:
             if hasattr(handler, "can_handle_dataset") and handler.can_handle_dataset(dataset_path):
                 return handler
@@ -1920,6 +1876,7 @@ class AutoStore:
         parsed_uri = urlparse(uri)
         scheme = parsed_uri.scheme.lower()
 
+        # For bucket-based backends (like S3), create backend per bucket, not per file
         # Check if we already have a backend for this scheme + netloc
         backend_key = f"{scheme}://{parsed_uri.netloc}"
 
@@ -1927,16 +1884,26 @@ class AutoStore:
             return self._secondary_backends[backend_key]
 
         # Create new backend for this URI
-        backend_class = _backend_registry.get_backend_class(scheme)
-        if not backend_class:
-            supported = _backend_registry.get_supported_schemes()
-            raise UnsupportedSchemeError(f"Unsupported storage scheme: '{scheme}'. Supported schemes: {supported}")
-
-        # Create backend-specific options, inheriting from global options
-        backend_options = self._create_cross_backend_options(backend_class, uri)
+        # Find backend through registered options for this scheme
+        registered_options = self._options_registry.get_options_for_scheme(scheme)
+        if registered_options and registered_options.backend_class:
+            backend_class = registered_options.backend_class
+            backend_options = registered_options
+            # For bucket-based backends, use only the bucket part of the URI
+            backend_uri = f"{scheme}://{parsed_uri.netloc}/"
+        # Special case: local file backend for empty scheme (built-in)
+        elif scheme in ("", "file"):
+            backend_class = LocalFileBackend
+            backend_options = self._create_cross_backend_options(backend_class, uri)
+            backend_uri = uri
+        else:
+            raise UnsupportedSchemeError(
+                f"No backend available for scheme '{scheme}'. "
+                f"Register options for this scheme using AutoStore with appropriate options."
+            )
 
         # Initialize and cache the backend
-        backend = backend_class(uri, backend_options)
+        backend = backend_class(backend_uri, backend_options)
         self._secondary_backends[backend_key] = backend
 
         return backend
@@ -2084,6 +2051,57 @@ class AutoStore:
     def get_size(self, key: str) -> int:
         """Get the size of a file in bytes."""
         return self.get_metadata(key).size
+
+    def read(self, key: str, format: t.Optional[str] = None) -> t.Any:
+        """Read data from storage with optional format specification.
+        
+        Args:
+            key: The storage key/path to read from
+            format: Optional format override (e.g., 'parquet', 'csv', 'json')
+                   Useful when the file has no extension or you want to override detection
+        
+        Returns:
+            The loaded data in appropriate format
+            
+        Example:
+            # Read with auto-detection
+            data = store.read("my_data")
+            
+            # Read with format override
+            df = store.read("s3a://bucket/dataset", format="parquet")
+        """
+        if format:
+            # Use format parameter by appending as query string
+            if '?' in key:
+                key += f"&format={format}"
+            else:
+                key += f"?format={format}"
+        
+        return self[key]
+    
+    def write(self, key: str, data: t.Any, format: t.Optional[str] = None) -> None:
+        """Write data to storage with optional format specification.
+        
+        Args:
+            key: The storage key/path to write to
+            data: The data to save
+            format: Optional format override (e.g., 'parquet', 'csv', 'json')
+                   If not provided, format is inferred from data type
+        
+        Example:
+            # Write with auto-detection
+            store.write("my_data", df)
+            
+            # Write with format override
+            store.write("my_data", df, format="parquet")
+        """
+        if format:
+            # Ensure the key has the correct extension
+            key_path = Path(key)
+            if not key_path.suffix:
+                key += f".{format.lstrip('.')}"
+        
+        self[key] = data
 
     def cleanup_cache(self) -> None:
         """Clean up expired cache entries."""
