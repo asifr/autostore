@@ -1778,17 +1778,54 @@ class AutoStore:
             backend.download_dataset(dataset_path, temp_dir, file_pattern)
             return temp_dir
 
-        # For now, use temp directory (could be enhanced with proper dataset caching)
-        temp_dir = cache_manager.get_temp_dir() / f"dataset_{hash_obj(dataset_path)}"
-        temp_dir.mkdir(exist_ok=True)
+        # Generate cache key for the dataset
+        cache_key = cache_manager._get_cache_key(backend.uri, dataset_path)
+        
+        # Check if dataset is already cached and not expired
+        cached_dir = cache_manager.cache_dir / cache_key
+        if cached_dir.exists():
+            cache_file = cached_dir / ".cache_meta"
+            if cache_file.exists():
+                try:
+                    import json
+                    with open(cache_file, 'r') as f:
+                        cache_meta = json.load(f)
+                    
+                    # Check if cache is expired
+                    from datetime import datetime, timedelta
+                    created_time = datetime.fromisoformat(cache_meta['created_time'])
+                    if cache_manager.cache_expiry_hours == 0 or \
+                       datetime.now() - created_time < timedelta(hours=cache_manager.cache_expiry_hours):
+                        log.debug(f"Cache hit for dataset {dataset_path}, using cached directory: {cached_dir}")
+                        return cached_dir
+                except Exception:
+                    # If cache meta is corrupted, remove and re-download
+                    import shutil
+                    shutil.rmtree(cached_dir, ignore_errors=True)
+        
+        # Create cache directory
+        cached_dir.mkdir(parents=True, exist_ok=True)
         
         # Use appropriate file pattern for download
         file_pattern = "*"
         if format_override == "parquet":
             file_pattern = "*.parquet"
             
-        backend.download_dataset(dataset_path, temp_dir, file_pattern)
-        return temp_dir
+        backend.download_dataset(dataset_path, cached_dir, file_pattern)
+        
+        # Create cache metadata
+        from datetime import datetime
+        import json
+        cache_meta = {
+            'created_time': datetime.now().isoformat(),
+            'dataset_path': dataset_path,
+            'backend_uri': backend.uri
+        }
+        cache_file = cached_dir / ".cache_meta"
+        with open(cache_file, 'w') as f:
+            json.dump(cache_meta, f)
+        
+        return cached_dir
 
     def _find_dataset_handler(self, dataset_path: Path, format_override: t.Optional[str] = None) -> t.Optional[DataHandler]:
         """Find handler that can process the dataset."""

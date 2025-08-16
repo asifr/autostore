@@ -569,8 +569,12 @@ class S3Backend(StorageBackend):
                     local_file_path = local_dataset_path / rel_path
                     local_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    # Download file
-                    self.download(self._strip_prefix(obj_key), local_file_path)
+                    # Download file with caching support
+                    cached_file = self.download_with_cache(self._strip_prefix(obj_key))
+                    
+                    # Copy cached file to dataset structure location
+                    import shutil
+                    shutil.copy2(cached_file, local_file_path)
                     downloaded_files.append(local_file_path)
 
             return downloaded_files
