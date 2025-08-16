@@ -5,6 +5,7 @@ License: Apache License 2.0
 
 Changes
 -------
+- 0.1.6 - Added S3Options for configuration management and parquet dataset support
 - 0.1.3 - Initial implementation
     - Implement S3 storage backend with basic operations
     - Added S3StorageConfig for configuration management.
@@ -12,8 +13,10 @@ Changes
     - Integrated error handling for common S3 exceptions.
     - Added support for multipart uploads and downloads.
 """
+
 import re
 import boto3
+import fnmatch
 import logging
 import warnings
 import typing as t
@@ -25,7 +28,7 @@ from urllib.parse import urlparse, parse_qs
 from boto3.s3.transfer import S3Transfer, TransferConfig
 from autostore.autostore import (
     StorageBackend,
-    StorageConfig,
+    Options,
     FileMetadata,
     StorageError,
     StorageFileNotFoundError,
@@ -33,6 +36,36 @@ from autostore.autostore import (
     StorageConnectionError,
     CONTENT_TYPES,
 )
+
+
+@dataclass
+class S3Options(Options):
+    """Options for S3 backend."""
+    
+    # Instance-level scheme specification
+    scheme: str = "s3"  # Default to s3, but can be overridden per instance
+
+    # Authentication
+    aws_access_key_id: t.Optional[str] = None
+    aws_secret_access_key: t.Optional[str] = None
+    aws_session_token: t.Optional[str] = None
+    profile_name: t.Optional[str] = None
+
+    # Configuration
+    region_name: t.Optional[str] = None
+    endpoint_url: t.Optional[str] = None
+    use_ssl: bool = True
+    verify: t.Optional[bool] = None
+
+    # Performance
+    multipart_threshold: int = 64 * 1024 * 1024  # 64MB
+    multipart_chunksize: int = 16 * 1024 * 1024  # 16MB
+    max_concurrency: int = 10
+
+    # Dataset Support
+    enable_dataset_detection: bool = True
+    dataset_cache_strategy: str = "preserve_structure"  # "preserve_structure" or "flatten"
+
 
 warnings.filterwarnings("ignore")
 logging.getLogger("botocore").setLevel(logging.WARNING)
@@ -99,27 +132,17 @@ def glob_translate(pattern: str) -> str:
     return f"^{pattern}$"
 
 
+# S3Options is now defined in autostore.py, but keep this for backward compatibility
 @dataclass
-class S3StorageConfig(StorageConfig):
-    """Extended configuration for S3 backend."""
+class S3StorageConfig(S3Options):
+    """Legacy S3 configuration for backward compatibility."""
 
-    cache_enabled: bool = True
-    aws_access_key_id: t.Optional[str] = None
-    aws_secret_access_key: t.Optional[str] = None
-    aws_session_token: t.Optional[str] = None
-    region_name: t.Optional[str] = None
-    endpoint_url: t.Optional[str] = None
-    profile_name: t.Optional[str] = None
-    use_ssl: bool = True
-    verify: t.Optional[bool] = None
-    multipart_threshold: int = 64 * 1024 * 1024  # 64MB
-    multipart_chunksize: int = 16 * 1024 * 1024  # 16MB
-    max_concurrency: int = 10
+    pass
 
 
 class S3Backend(StorageBackend):
     """
-    S3 storage backend for AWS S3 and S3-compatible services.
+    S3 storage backend for AWS S3 and S3-compatible services with dataset support.
 
     Supports URI formats:
     - s3://bucket/prefix/
@@ -127,20 +150,24 @@ class S3Backend(StorageBackend):
     - s3://bucket/prefix/?endpoint_url=https://s3.amazonaws.com
 
     Authentication methods:
-    1. Explicit credentials in config
-    2. AWS profile name in config
+    1. Explicit credentials in options
+    2. AWS profile name in options
     3. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     4. IAM roles (when running on EC2)
     5. AWS credentials file (~/.aws/credentials)
     """
 
-    def __init__(self, uri: str, config: S3StorageConfig):
-        super().__init__(uri, config)
+    # Declare the options class for this backend
+    options_class = S3Options
 
-        # Parse S3 URI
+    def __init__(self, uri: str, options: S3Options):
+        super().__init__(uri, options)
+
+        # Parse S3 URI - accept any scheme since this backend can handle S3-compatible services
         parsed = urlparse(uri)
-        if parsed.scheme not in ("s3", "s3a"):
-            raise ValueError(f"Unsupported scheme for S3Backend: {parsed.scheme}")
+        self.scheme = parsed.scheme
+        if not parsed.scheme:
+            raise ValueError("URI must include a scheme (e.g., s3://, conductor://)")
 
         # Extract bucket and prefix from URI
         self.bucket, self.prefix = parse_s3_path(uri)
@@ -154,11 +181,11 @@ class S3Backend(StorageBackend):
         # Parse query parameters from URI
         query_params = parse_qs(parsed.query) if parsed.query else {}
 
-        # Update config with URI query parameters
+        # Update options with URI query parameters
         if "region" in query_params:
-            self.config.region_name = query_params["region"][0]
+            self.options.region_name = query_params["region"][0]
         if "endpoint_url" in query_params:
-            self.config.endpoint_url = query_params["endpoint_url"][0]
+            self.options.endpoint_url = query_params["endpoint_url"][0]
 
         # Initialize S3 client
         self._client = None
@@ -176,9 +203,9 @@ class S3Backend(StorageBackend):
         """Lazy initialization of S3 transfer manager."""
         if self._transfer is None:
             transfer_config = TransferConfig(
-                multipart_threshold=self.config.multipart_threshold,
-                multipart_chunksize=self.config.multipart_chunksize,
-                max_concurrency=self.config.max_concurrency,
+                multipart_threshold=self.options.multipart_threshold,
+                multipart_chunksize=self.options.multipart_chunksize,
+                max_concurrency=self.options.max_concurrency,
                 use_threads=True,
             )
             self._transfer = S3Transfer(client=self.client, config=transfer_config)
@@ -188,11 +215,11 @@ class S3Backend(StorageBackend):
         """Create boto3 S3 client with configuration."""
         try:
             # Create boto3 config
-            boto_config = Config(read_timeout=self.config.timeout, retries={"max_attempts": self.config.max_retries})
+            boto_config = Config(read_timeout=self.options.timeout, retries={"max_attempts": self.options.max_retries})
 
             # Create session
-            if self.config.profile_name:
-                session = boto3.Session(profile_name=self.config.profile_name)
+            if self.options.profile_name:
+                session = boto3.Session(profile_name=self.options.profile_name)
             else:
                 session = boto3.Session()
 
@@ -200,22 +227,22 @@ class S3Backend(StorageBackend):
             client_kwargs = {
                 "service_name": "s3",
                 "config": boto_config,
-                "use_ssl": self.config.use_ssl,
+                "use_ssl": self.options.use_ssl,
             }
 
             # Add credentials if provided
-            if self.config.aws_access_key_id:
-                client_kwargs["aws_access_key_id"] = self.config.aws_access_key_id
-            if self.config.aws_secret_access_key:
-                client_kwargs["aws_secret_access_key"] = self.config.aws_secret_access_key
-            if self.config.aws_session_token:
-                client_kwargs["aws_session_token"] = self.config.aws_session_token
-            if self.config.region_name:
-                client_kwargs["region_name"] = self.config.region_name
-            if self.config.endpoint_url:
-                client_kwargs["endpoint_url"] = self.config.endpoint_url
-            if self.config.verify is not None:
-                client_kwargs["verify"] = self.config.verify
+            if self.options.aws_access_key_id:
+                client_kwargs["aws_access_key_id"] = self.options.aws_access_key_id
+            if self.options.aws_secret_access_key:
+                client_kwargs["aws_secret_access_key"] = self.options.aws_secret_access_key
+            if self.options.aws_session_token:
+                client_kwargs["aws_session_token"] = self.options.aws_session_token
+            if self.options.region_name:
+                client_kwargs["region_name"] = self.options.region_name
+            if self.options.endpoint_url:
+                client_kwargs["endpoint_url"] = self.options.endpoint_url
+            if self.options.verify is not None:
+                client_kwargs["verify"] = self.options.verify
 
             return session.client(**client_kwargs)
 
@@ -277,7 +304,7 @@ class S3Backend(StorageBackend):
                 raise StorageFileNotFoundError(f"File not found: {remote_path}")
 
             # Use transfer manager for large files, direct download for small files
-            if content_length > self.config.multipart_threshold:
+            if content_length > self.options.multipart_threshold:
                 self.transfer.download_file(self.bucket, full_key, str(local_path))
             else:
                 response = self.client.get_object(Bucket=self.bucket, Key=full_key)
@@ -311,7 +338,7 @@ class S3Backend(StorageBackend):
                 extra_args["ContentType"] = content_type
 
             # Use transfer manager for large files, direct put_object for small files
-            if file_size > self.config.multipart_threshold:
+            if file_size > self.options.multipart_threshold:
                 self.transfer.upload_file(str(local_path), self.bucket, full_key, extra_args=extra_args)
             else:
                 with open(local_path, "rb") as f:
@@ -479,6 +506,67 @@ class S3Backend(StorageBackend):
 
         except Exception:
             return False
+
+    def is_dataset(self, path: str) -> bool:
+        """Check if S3 path represents a dataset (directory with multiple files)."""
+        full_key = self._get_full_key(path)
+
+        # List objects with prefix to see if multiple files exist
+        try:
+            response = self.client.list_objects_v2(
+                Bucket=self.bucket,
+                Prefix=full_key,
+                MaxKeys=2,  # We only need to know if there's more than 1
+            )
+
+            contents = response.get("Contents", [])
+
+            # If exactly one object matches the key exactly, it's a single file
+            exact_matches = [obj for obj in contents if obj["Key"] == full_key]
+            if len(exact_matches) == 1:
+                return False
+
+            # If multiple objects with this prefix, it's a dataset
+            return len(contents) > 1
+        except Exception:
+            return False
+
+    def download_dataset(
+        self, remote_dataset_path: str, local_dataset_path: Path, file_pattern: str = "*"
+    ) -> t.List[Path]:
+        """Download entire dataset preserving S3 folder structure."""
+        full_prefix = self._get_full_key(remote_dataset_path)
+        downloaded_files = []
+
+        try:
+            # Get all objects with the prefix
+            paginator = self.client.get_paginator("list_objects_v2")
+
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=full_prefix):
+                for obj in page.get("Contents", []):
+                    obj_key = obj["Key"]
+
+                    # Apply file pattern filter if specified
+                    if file_pattern != "*":
+                        filename = Path(obj_key).name
+                        if not fnmatch.fnmatch(filename, file_pattern):
+                            continue
+
+                    # Calculate local path preserving S3 structure
+                    rel_path = obj_key[len(full_prefix) :].lstrip("/")
+                    if not rel_path:  # Skip the directory itself
+                        continue
+
+                    local_file_path = local_dataset_path / rel_path
+                    local_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Download file
+                    self.download(self._strip_prefix(obj_key), local_file_path)
+                    downloaded_files.append(local_file_path)
+
+            return downloaded_files
+        except Exception as e:
+            raise StorageError(f"Error downloading dataset {remote_dataset_path}: {e}") from e
 
     def _guess_content_type(self, path: str) -> t.Optional[str]:
         """Guess content type from file extension."""

@@ -1,19 +1,19 @@
 # AutoStore - File Storage Made Simple
 
-AutoStore provides a dictionary-like interface for reading and writing files with caching and different storage backends.
+AutoStore provides a dictionary-like interface for reading and writing files with automatic backend detection and cross-cloud access.
 
-AutoStore eliminates the cognitive overhead of managing different file formats, letting you focus on your data and analysis rather than the mechanics of file I/O. It automatically handles file format detection, type inference, upload/download operations, and provides a clean, intuitive API for data persistence across local and cloud storage.
+AutoStore eliminates the cognitive overhead of managing different file formats and storage backends, letting you focus on your data and analysis rather than the mechanics of file I/O. It automatically detects storage backends from URI prefixes (s3://, gcs://, etc.), handles file format detection, type inference, and provides a clean, intuitive API for data persistence across local and cloud storage.
 
 ## Why Use AutoStore?
 
--   **Simplicity**: Store and retrieve data with dictionary syntax. No need to remember APIs for different file formats.
--   **Caching**: Caching system with configurable expiration reduces redundant downloads, especially for cloud storage.
--   **Multiple Storage Backends**: Seamlessly work with local files, S3, and other cloud storage services.
--   **Type Detection**: Automatically infers the best file format based on the data type.
--   **Multiple Data Types**: Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more.
--   **Extensible Architecture**: Pluggable handler system for new data types and storage backends.
--   **Performance Optimized**: Upload/download operations with efficient handling of large files.
--   **Type-Safe Configuration**: Dataclass-based configuration with IDE support and validation.
+-   **Zero Configuration**: No manual backend registration - automatically detects storage type from URI prefixes
+-   **Multi-Service Support**: Use multiple S3-compatible services (AWS, Conductor, MinIO, etc.) with different configurations
+-   **Cross-Backend Access**: Access any storage backend from a single store instance using URI syntax
+-   **Dataset Support**: Automatically handles both individual files and multi-file datasets (parquet, CSV collections)
+-   **Smart Caching**: Intelligent caching system with configurable expiration reduces redundant downloads
+-   **Multiple Data Types**: Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more
+-   **Type-Safe Options**: Dataclass-based configuration with IDE support and validation for each service
+-   **Performance Optimized**: Upload/download operations with efficient handling of large files and datasets
 
 ## Getting Started
 
@@ -23,11 +23,12 @@ AutoStore requires Python 3.10+ and can be installed via pip.
 pip install autostore
 ```
 
-### Basic Usage
+### Basic Usage - Zero Configuration
 
 ```python
 from autostore import AutoStore
 
+# Local storage - no configuration needed
 store = AutoStore("./data")
 
 # Write data - automatically saves with appropriate extensions
@@ -41,29 +42,126 @@ config = store["config"]             # Returns a dict
 logs = store["logs"]                 # Returns a list of dicts
 ```
 
-### Cloud Storage (S3)
+### Cloud Storage - Automatic Detection
 
 ```python
 from autostore import AutoStore
-from autostore.s3 import S3Backend, S3StorageConfig
+from autostore.s3 import S3Options
 
-# Register S3 backend
-AutoStore.register_backend("s3", S3Backend)
+# S3 - automatically detected from s3:// prefix
+store = AutoStore(
+    "s3://my-bucket/data/",
+    profile_name="my-profile",
+    cache_enabled=True
+)
 
-# Configure S3 with caching
-s3_config = S3StorageConfig(
+# Or with explicit options
+options = S3Options(
+    profile_name="my-profile",
     region_name="us-east-1",
     cache_enabled=True,
-    cache_expiry_hours=12,
-    multipart_threshold=64 * 1024 * 1024  # 64MB
+    cache_expiry_hours=12
 )
-store = AutoStore("s3://my-bucket/data/", config=s3_config)
+store = AutoStore("s3://my-bucket/data/", options=options)
 
 # Write data to S3
 store["experiment/results"] = {"accuracy": 0.95, "epochs": 100}
 
 # Read data from S3
 results = store["experiment/results"]  # Uses cache on subsequent loads
+```
+
+### Cross-Backend Access
+
+```python
+from autostore import AutoStore
+
+# Create a local store as primary backend
+store = AutoStore("./local-cache", cache_enabled=True)
+
+# Access different backends using full URIs
+store["local_file"] = {"type": "local"}                    # Primary backend
+store["s3://bucket/remote.json"] = {"type": "s3"}          # S3 backend
+
+# Read from any backend
+local_data = store["local_file"]                           # From local
+s3_data = store["s3://bucket/remote.json"]                 # From S3
+```
+
+### Multiple S3-Compatible Services
+
+AutoStore supports multiple S3-compatible services with different configurations:
+
+```python
+from autostore import AutoStore
+from autostore.s3 import S3Options
+
+# Register new schemes for different S3-compatible services
+AutoStore.register_scheme("minio", "autostore.s3")
+AutoStore.register_scheme("digitalocean", "autostore.s3")
+
+# Create service-specific options with different configurations
+aws_options = S3Options(
+    scheme="s3",
+    profile_name="aws-production",
+    region_name="us-east-1", 
+    cache_enabled=True
+)
+
+minio_options = S3Options(
+    scheme="minio",
+    endpoint_url="https://minio.mycompany.com",
+    aws_access_key_id="minioadmin",
+    aws_secret_access_key="minioadmin",
+    region_name="us-east-1"
+)
+
+digitalocean_options = S3Options(
+    scheme="digitalocean",
+    endpoint_url="https://nyc3.digitaloceanspaces.com",
+    region_name="nyc3",
+    cache_enabled=True
+)
+
+# Create AutoStore with multiple backend options
+store = AutoStore(
+    "./local-cache",
+    options=[aws_options, minio_options, digitalocean_options]
+)
+
+# Each scheme automatically uses its appropriate configuration
+store["s3://aws-bucket/data.json"] = {"source": "aws"}
+store["minio://my-bucket/data.json"] = {"source": "minio"}  
+store["digitalocean://my-space/data.json"] = {"source": "digitalocean"}
+
+# Cross-backend data access with automatic option selection
+aws_data = store["s3://aws-bucket/data.json"]
+minio_data = store["minio://my-bucket/data.json"]
+digitalocean_data = store["digitalocean://my-space/data.json"]
+```
+
+### Dataset Support
+
+```python
+from autostore import AutoStore
+
+# Automatically detects and handles datasets
+# For example, if you have multiple parquet files in an S3 bucket:
+# ├── weather
+# │   ├── 2024
+# │   │   ├── january.parquet
+# │   │   ├── february.parquet
+# │   │   └── march.parquet
+store = AutoStore("s3://my-bucket/datasets/")
+
+# Access parquet dataset (multiple files)
+weather_data = store["weather/2024/"]  # Loads entire dataset as LazyFrame
+
+# Access individual file
+single_file = store["weather/2024/january.parquet"]
+
+# List files in dataset
+files = list(store.list_files("weather/2024/*", recursive=True))
 ```
 
 ## Supported Data Types
@@ -83,36 +181,131 @@ results = store["experiment/results"]  # Uses cache on subsequent loads
 | YAML data                  | `.yaml`, `.yml`        | Human-readable config files | PyYAML           |
 | Any Python object          | `.pkl`                 | Pickle fallback             | built-in         |
 
+## Supported Storage Backends
+
+AutoStore automatically detects the storage backend from URI prefixes:
+
+| Backend | URI Prefix          | Options Class | Example                       |
+| ------- | ------------------- | ------------- | ----------------------------- |
+| Local   | `./path` or `/path` | `Options`     | `./data`, `/Users/name/files` |
+| S3      | `s3://`             | `S3Options`   | `s3://bucket/prefix/`         |
+
 ## Configuration Options
 
-### S3StorageConfig
+### Base Options (All Backends)
 
 ```python
-from s3 import S3StorageConfig
+from autostore import Options
 
-config = S3StorageConfig(
+base_options = Options(
+    cache_enabled=True,           # Enable local caching
+    cache_dir="./cache",          # Custom cache directory
+    cache_expiry_hours=12,        # Cache expiration time
+    timeout=30,                   # Request timeout in seconds
+    max_retries=3,                # Maximum retry attempts
+    retry_delay=1.0               # Delay between retries
+)
+```
+
+### S3Options
+
+```python
+from autostore.s3 import S3Options
+
+s3_options = S3Options(
+    # Scheme specification for multi-backend support
+    scheme="s3",                          # URI scheme this options applies to
+    
+    # Authentication
     aws_access_key_id="your-key",
     aws_secret_access_key="your-secret",
+    profile_name="my-profile",            # AWS profile name
+
+    # Configuration
     region_name="us-east-1",
+    endpoint_url="custom-endpoint",       # For S3-compatible services
+
+    # Performance
+    multipart_threshold=64 * 1024 * 1024, # Files > 64MB use multipart
+    multipart_chunksize=16 * 1024 * 1024, # Chunk size for uploads
+    max_concurrency=10,                   # Concurrent operations
+
+    # Inherited from Options
     cache_enabled=True,
-    cache_expiry_hours=12,
-    multipart_threshold=64 * 1024 * 1024,  # Files larger than this use multipart upload
-    multipart_chunksize=16 * 1024 * 1024,  # Chunk size for multipart uploads
-    max_concurrency=10                     # Maximum concurrent uploads/downloads
+    cache_expiry_hours=6
 )
+```
+
+### Usage Patterns
+
+```python
+# Method 1: Keyword arguments
+store = AutoStore("s3://bucket/", profile_name="prod", cache_enabled=True)
+
+# Method 2: Single options object
+options = S3Options(scheme="s3", profile_name="prod", cache_enabled=True)
+store = AutoStore("s3://bucket/", options=options)
+
+# Method 3: Multiple options for different services
+aws_options = S3Options(scheme="s3", profile_name="aws-prod")
+minio_options = S3Options(scheme="minio", endpoint_url="https://minio.example.com")
+store = AutoStore("./cache", options=[aws_options, minio_options])
+
+# Method 4: Mixed (options object + additional kwargs)
+base_options = S3Options(scheme="s3", profile_name="prod")
+store = AutoStore("s3://bucket/", options=base_options, cache_enabled=True)
 ```
 
 ## Advanced Features
 
+### Backend Management
+
+```python
+# Register new S3-compatible services
+AutoStore.register_scheme("minio", "autostore.s3")
+AutoStore.register_scheme("digitalocean", "autostore.s3")
+
+# Check supported backends
+backends = store.get_supported_backends()
+print(f"Available: {backends}")  # ['s3', 'minio', 'digitalocean', 'file', '']
+
+# View active backends
+active = store.list_active_backends()
+print(f"Active: {active}")  # ['primary: ./data', 's3: s3://bucket/', 'minio: minio://bucket/']
+
+# Backend auto-loading with appropriate options
+data = store["s3://bucket/file.json"]              # Uses AWS S3 options
+data = store["minio://bucket/file.json"]           # Uses MinIO options
+data = store["digitalocean://space/file.json"]     # Uses DigitalOcean options
+```
+
+### Dataset Operations
+
+```python
+# Dataset detection
+is_dataset = store.primary_backend.is_dataset("path/to/data/")
+is_directory = store.primary_backend.is_directory("path/")
+
+# List dataset files
+files = list(store.list_files("dataset/*", recursive=True))
+
+# Load entire dataset (for parquet/CSV collections)
+lazy_frame = store["weather_data/"]  # Loads all parquet files as one LazyFrame
+```
+
 ### Caching System
 
-AutoStore includes an caching system for S3 that:
+AutoStore includes caching that:
 
 -   Stores frequently accessed files locally
 -   Uses ETags for cache validation
 -   Automatically expires old cache entries
+-   Works across all backends
 
 ```python
+# Enable caching for any backend
+store = AutoStore("s3://bucket/", cache_enabled=True, cache_expiry_hours=6)
+
 # Cache management
 store.cleanup_cache()  # Remove expired cache entries
 
@@ -200,17 +393,44 @@ with AutoStore("./data", config=config) as store:
 # Temporary files are automatically cleaned up here
 ```
 
-## Multiple Storage Backends
+## Migration from v0.1.x
 
-AutoStore supports pluggable storage backends:
+If you're upgrading from an earlier version, here are the key changes:
+
+### Before (v0.1.x)
 
 ```python
-# Local storage
-local_store = AutoStore("./data")
+from autostore import AutoStore
+from autostore.s3 import S3Backend, S3StorageConfig
 
-# S3 storage
-s3_store = AutoStore("s3://bucket/prefix/")
+# Manual backend registration required
+AutoStore.register_backend("s3", S3Backend)
+
+# Separate config objects
+config = S3StorageConfig(region_name="us-east-1")
+store = AutoStore("s3://bucket/", config=config)
 ```
+
+### After (v2.0+)
+
+```python
+from autostore import AutoStore, S3Options
+
+# Automatic backend detection - no registration needed
+store = AutoStore("s3://bucket/", region_name="us-east-1")
+
+# Or with options object
+options = S3Options(region_name="us-east-1")
+store = AutoStore("s3://bucket/", options=options)
+```
+
+### Key Changes
+
+-   ✅ No backend registration - automatic detection from URI prefixes
+-   ✅ Unified Options system - consistent configuration across backends
+-   ✅ Cross-backend access - access any backend from any store instance
+-   ✅ Dataset support - automatic handling of multi-file datasets
+-   ✅ Enhanced error handling - clear dependency and configuration messages
 
 ## Performance Considerations
 
@@ -226,37 +446,32 @@ AutoStore automatically optimizes for large files:
 
 Choose AutoStore when you need:
 
--   **Data science projects** with mixed file types and cloud storage
--   **Building data pipelines** with heterogeneous data sources
--   **Rapid prototyping** where you don't want to think about file formats
--   **Consistent data access patterns** across local and cloud environments
--   **Performance optimization** through intelligent caching
--   **Easy extensibility** for custom data types and storage backends
--   **Type-safe configuration** with dataclass-based settings
+-   Multi-cloud data access with seamless backend switching
+-   Dataset processing with automatic detection of file collections
+-   Zero-configuration setup for rapid prototyping and development
+-   Cross-backend operations without managing multiple client libraries
+-   Data science projects with mixed file types across storage systems
+-   Type-safe configuration with IDE support and validation
+-   Intelligent caching to optimize cloud storage costs and performance
 
 Don't choose AutoStore when:
 
--   You need complex queries (use TinyDB or databases)
--   You only work with one data type consistently
--   You need zero dependencies (use Shelve)
--   You require advanced database features
-
-## Comparison with Alternatives
-
-| Feature                   | AutoStore           | Shelve         | DiskCache      | TinyDB        | PickleDB      | SQLiteDict     |
-| ------------------------- | ------------------- | -------------- | -------------- | ------------- | ------------- | -------------- |
-| **Multi-format Support**  | ✅ 12+ formats      | ❌ Pickle only | ❌ Pickle only | ❌ JSON only  | ❌ JSON only  | ❌ Pickle only |
-| **Auto Format Detection** | ✅ Smart inference  | ❌ Manual      | ❌ Manual      | ❌ Manual     | ❌ Manual     | ❌ Manual      |
-| **Cloud Storage**         | ✅ S3, extensible   | ❌ Local only  | ❌ Local only  | ❌ Local only | ❌ Local only | ❌ Local only  |
-| **Intelligent Caching**   | ✅ ETag-based       | ❌ None        | ✅ Advanced    | ❌ None       | ❌ None       | ❌ None        |
-| **Type-Safe Config**      | ✅ Dataclasses      | ❌ None        | ✅ Classes     | ❌ Dicts      | ❌ None       | ❌ None        |
-| **Large File Handling**   | ✅ Multipart        | ❌ Limited     | ✅ Good        | ❌ Limited    | ❌ Limited    | ❌ Limited     |
-| **Extensibility**         | ✅ Handler system   | ❌ Limited     | ❌ Limited     | ✅ Middleware | ❌ Limited    | ❌ Limited     |
-| **Performance**           | ✅ Cached/Optimized | 🔶 Medium      | ✅ Fast        | 🔶 Medium     | 🔶 Medium     | 🔶 Medium      |
-| **Standard Library**      | ❌ External         | ✅ Built-in    | ❌ External    | ❌ External   | ❌ External   | ❌ External    |
+-   You need complex queries or relational operations (use databases)
+-   You only work with one data type and one storage backend consistently
+-   You need zero dependencies (use built-in libraries like shelve)
+-   You require advanced database features like transactions or indexing
+-   You need fine-grained control over every storage operation
 
 ## Changes
 
+-   0.1.6 - Scheme-based backend detection and Options system with automatic backend detection from URI schemes
+    -   Unified Options dataclass system replacing separate config classes
+    -   Cross-backend access from single store instance
+    -   Dataset support with automatic multi-file detection
+    -   Enhanced error handling with dependency management
+    -   Breaking: Removed manual backend registration
+    -   Breaking: Replaced `S3StorageConfig` with `S3Options`
+-   0.1.5 - Added StorePath to use the Autostore instance in path-like operations
 -   0.1.4 - parquet and csv are loaded as LazyFrames by default and sparse matrices are now saved as .sparse.npz
 -   0.1.3
     -   Refactored to use different storage backends including local file system and S3.
