@@ -173,3 +173,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 WORKLOG.md
+archived/
+.DS_STORE
