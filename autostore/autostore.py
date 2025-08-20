@@ -1107,8 +1107,12 @@ class AutoPath:
             fresh_data = data_path.load(ignore_cache=True)
             ```
         """
-        rel_path = self._get_relative_path()
-        return self._store.read(rel_path, format=format, ignore_cache=ignore_cache)
+        # Use full path for URIs to ensure proper backend routing, relative path for local files
+        if self._is_uri:
+            return self._store.read(self._path_str, format=format, ignore_cache=ignore_cache)
+        else:
+            rel_path = self._get_relative_path()
+            return self._store.read(rel_path, format=format, ignore_cache=ignore_cache)
 
     def save(self, data: Any, format: Optional[str] = None) -> None:
         """
