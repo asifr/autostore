@@ -467,9 +467,6 @@ Don't choose AutoStore when:
 
 ## Changes
 
--   0.1.13 - Added DataPath class for path-like operations with automatic backend detection
-    -   DataPath supports all storage operations like read, write, upload, download, delete, etc.
-    -   DataPath can be used in place of AutoStore for path-like interactions
 -   0.1.8 - Auto scheme registration enhancement
 -   0.1.7 - Cache expiry can be set to 0 to never expire cache entries.
 -   0.1.6 - Scheme-based backend detection and Options system with automatic backend detection from URI schemes
