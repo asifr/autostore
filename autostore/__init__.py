@@ -1,3 +1,3 @@
-__version__ = "0.1.14"
+__version__ = "0.1.15"
 
-from autostore.autostore import AutoStore, DataPath
+from autostore.autostore import AutoStore, AutoPath
