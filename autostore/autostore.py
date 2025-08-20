@@ -521,6 +521,14 @@ class AutoPath:
         config_path.move_to("s3a://another-bucket/new-config.txt")  # Move the file or directory to another location
         config_path.upload_from("./local/file.txt")  # Upload a local file to this path
         config_path.download_to("./local/file.txt")  # Download this file to a local path
+
+        # File-like operations (works with numpy, etc.)
+        matrix_path = remote / "cooccurrence_matrix.npz"
+        np.savez_compressed(matrix_path, data=matrix.data, indices=matrix.indices)  # Works directly!
+
+        # Or with context manager for explicit control
+        with matrix_path as f:
+            np.savez_compressed(f, data=matrix.data, indices=matrix.indices)
         ```
     """
 
@@ -558,6 +566,10 @@ class AutoPath:
                     Path(self._path_str).parent if Path(self._path_str).parent != Path(self._path_str) else Path(".")
                 )
                 self._store = AutoStore(str(parent_path))
+
+        # File-like object state for buffered writing
+        self._write_buffer = bytearray()
+        self._is_open = False
 
     @property
     def path_str(self) -> str:
@@ -1137,3 +1149,64 @@ class AutoPath:
         """
         rel_path = self._get_relative_path()
         self._store.write(rel_path, data, format=format)
+
+    # File-like object methods for compatibility with functions like np.savez_compressed
+    def write(self, data: bytes) -> int:
+        """
+        Write bytes to the file buffer.
+
+        This method allows AutoPath to work as a file-like object with functions
+        like numpy's savez_compressed that expect a file with a write method.
+
+        Args:
+            data: Bytes to write to the buffer
+
+        Returns:
+            Number of bytes written
+
+        Example:
+            # Works with numpy savez_compressed
+            np.savez_compressed(matrix_path, data=matrix.data, indices=matrix.indices)
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError("write() argument must be bytes or bytearray")
+
+        self._is_open = True
+        self._write_buffer.extend(data)
+        return len(data)
+
+    def flush(self) -> None:
+        """Flush the write buffer (no-op for compatibility)."""
+        pass
+
+    def close(self) -> None:
+        """
+        Close the file-like object and save buffered data to storage.
+
+        This uploads the buffered data to the backend storage and clears the buffer.
+        """
+        if self._is_open and self._write_buffer:
+            self.write_bytes(bytes(self._write_buffer))
+            self._write_buffer.clear()
+        self._is_open = False
+
+    def readable(self) -> bool:
+        """Return whether the file supports reading."""
+        return True
+
+    def writable(self) -> bool:
+        """Return whether the file supports writing."""
+        return True
+
+    def seekable(self) -> bool:
+        """Return whether the file supports seeking."""
+        return False
+
+    def __enter__(self):
+        """Context manager entry."""
+        self._is_open = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - automatically close and save."""
+        self.close()
