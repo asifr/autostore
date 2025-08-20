@@ -445,11 +445,11 @@ def hash_obj(obj: str, seed: int = 123) -> str:
     return hashlib.md5(f"{seed}:{obj}".encode("utf-8")).hexdigest()
 
 
-# DataPath does NOT implement storage operations directly. Instead it does the following:
+# AutoPath does NOT implement storage operations directly. Instead it does the following:
 # 1. Path Management: Handles path parsing, URI detection, and path operations (joining, parent/child relationships)
 # 2. Backend Selection: Routes operations to the appropriate backend based on the URI scheme
 # 3. Path-like Interface: Provides the familiar pathlib.Path-style API
-# 4. Path Translation: Converts DataPath operations into backend method calls
+# 4. Path Translation: Converts AutoPath operations into backend method calls
 # Backend's Role (Actual Work):
 # The backends (local.py, s3.py) handle all the real storage operations:
 # LocalFileBackend (local.py):
@@ -465,19 +465,19 @@ def hash_obj(obj: str, seed: int = 123) -> str:
 # - delete() → client.delete_object()
 # - list_files() → client.get_paginator("list_objects_v2")
 # Here's what actually happens when we call: data_path.read_text()
-# 1. DataPath determines which backend to use (self._get_backend())
-# 2. DataPath converts the path to backend format (self._get_relative_path())
-# 3. DataPath calls backend.download_with_cache(rel_path)
+# 1. AutoPath determines which backend to use (self._get_backend())
+# 2. AutoPath converts the path to backend format (self._get_relative_path())
+# 3. AutoPath calls backend.download_with_cache(rel_path)
 # 4. Backend does the actual work (S3 download or local file access)
-# 5. DataPath reads from the local file and returns the content
-# DataPath has ZERO knowledge of AWS APIs, boto3, file system calls, etc. All the storage-specific logic lives in the backends. DataPath just:
+# 5. AutoPath reads from the local file and returns the content
+# AutoPath has ZERO knowledge of AWS APIs, boto3, file system calls, etc. All the storage-specific logic lives in the backends. AutoPath just:
 # - Figures out which backend to use
-# - Translates DataPath operations → backend method calls
+# - Translates AutoPath operations → backend method calls
 # - Provides a consistent interface regardless of backend
-# This is a clean separation of concerns: DataPath handles the "what" (path operations) while backends handle the "how" (actual storage implementation).
+# This is a clean separation of concerns: AutoPath handles the "what" (path operations) while backends handle the "how" (actual storage implementation).
 
 
-class DataPath:
+class AutoPath:
     """
     PathLike access to local and S3 storage.
 
@@ -501,7 +501,7 @@ class DataPath:
             ],
         )
 
-        remote = DataPath("s3a://bucket/prefix", store=store)
+        remote = AutoPath("s3a://bucket/prefix", store=store)
         v1 = remote / "v1"
         config_path = v1 / "config.txt"
         config_path.exists()  # True if the file exists
@@ -524,15 +524,15 @@ class DataPath:
         ```
     """
 
-    def __init__(self, path: Union[str, "DataPath", Path], store: Optional["AutoStore"] = None):
+    def __init__(self, path: Union[str, "AutoPath", Path], store: Optional["AutoStore"] = None):
         """
-        Initialize DataPath.
+        Initialize AutoPath.
 
         Args:
-            path: Path string, DataPath instance, or pathlib.Path
+            path: Path string, AutoPath instance, or pathlib.Path
             store: AutoStore instance for storage operations
         """
-        if isinstance(path, DataPath):
+        if isinstance(path, AutoPath):
             self._path_str = path._path_str
             self._store = store or path._store
         elif isinstance(path, Path):
@@ -578,12 +578,12 @@ class DataPath:
         return self._path_str
 
     def __repr__(self) -> str:
-        """Detailed representation of the DataPath."""
-        return f"DataPath('{self._path_str}')"
+        """Detailed representation of the AutoPath."""
+        return f"AutoPath('{self._path_str}')"
 
-    def __truediv__(self, other: Union[str, "DataPath", Path]) -> "DataPath":
+    def __truediv__(self, other: Union[str, "AutoPath", Path]) -> "AutoPath":
         """Join paths using the / operator."""
-        if isinstance(other, (DataPath, Path)):
+        if isinstance(other, (AutoPath, Path)):
             other = str(other)
 
         if self._is_uri:
@@ -595,11 +595,11 @@ class DataPath:
             # For local paths, use regular path joining
             new_path = str(Path(self._path_str) / other)
 
-        return DataPath(new_path, self._store)
+        return AutoPath(new_path, self._store)
 
     def __eq__(self, other) -> bool:
-        """Check equality with another DataPath."""
-        if not isinstance(other, DataPath):
+        """Check equality with another AutoPath."""
+        if not isinstance(other, AutoPath):
             return False
         return self._path_str == other._path_str
 
@@ -636,7 +636,7 @@ class DataPath:
         return Path(self._path_str).suffixes
 
     @property
-    def parent(self) -> "DataPath":
+    def parent(self) -> "AutoPath":
         """The parent directory."""
         if self._is_uri:
             parsed_parent = Path(self._parsed.path).parent
@@ -648,10 +648,10 @@ class DataPath:
         else:
             parent_path = str(Path(self._path_str).parent)
 
-        return DataPath(parent_path, self._store)
+        return AutoPath(parent_path, self._store)
 
     @property
-    def parents(self) -> List["DataPath"]:
+    def parents(self) -> List["AutoPath"]:
         """An immutable sequence providing access to the logical ancestors of the path."""
         parents = []
         current = self.parent
@@ -820,7 +820,7 @@ class DataPath:
             if not missing_ok:
                 raise FileNotFoundError(f"File not found: {self._path_str}")
 
-    def iterdir(self) -> Iterator["DataPath"]:
+    def iterdir(self) -> Iterator["AutoPath"]:
         """Iterate over directory contents."""
         backend = self._get_backend()
         rel_path = self._get_relative_path()
@@ -834,13 +834,13 @@ class DataPath:
                     raise NotADirectoryError(f"Not a directory: {self._path_str}")
 
                 for item in full_path.iterdir():
-                    # Convert back to DataPath
+                    # Convert back to AutoPath
                     rel_item_path = str(item.relative_to(backend.root_path))
                     if self._is_uri:
                         item_path = f"{self._parsed.scheme}://{self._parsed.netloc}/{rel_item_path}"
                     else:
                         item_path = str(item)
-                    yield DataPath(item_path, self._store)
+                    yield AutoPath(item_path, self._store)
             except Exception:
                 return
         else:
@@ -860,7 +860,7 @@ class DataPath:
                         full_path = f"{self._parsed.scheme}://{self._parsed.netloc}/{clean_file_path}"
                     else:
                         full_path = str(Path(self._store.storage_uri) / file_path)
-                    yield DataPath(full_path, self._store)
+                    yield AutoPath(full_path, self._store)
             except Exception:
                 pass
 
@@ -868,7 +868,7 @@ class DataPath:
             if not found_any and not self.is_dir():
                 raise NotADirectoryError(f"Not a directory: {self._path_str}")
 
-    def glob(self, pattern: str) -> Iterator["DataPath"]:
+    def glob(self, pattern: str) -> Iterator["AutoPath"]:
         """Glob for files matching pattern."""
         base_path = self._get_relative_path()
         full_pattern = f"{base_path.rstrip('/')}/{pattern}" if base_path else pattern
@@ -881,13 +881,13 @@ class DataPath:
                     full_path = f"{self._parsed.scheme}://{self._parsed.netloc}/{file_path}"
                 else:
                     full_path = str(Path(self._store.storage_uri) / file_path)
-                yield DataPath(full_path, self._store)
+                yield AutoPath(full_path, self._store)
         except Exception:
             return
 
-    def copy_to(self, destination: Union[str, "DataPath", Path]) -> "DataPath":
+    def copy_to(self, destination: Union[str, "AutoPath", Path]) -> "AutoPath":
         """Copy file or directory to destination."""
-        dest = DataPath(destination) if not isinstance(destination, DataPath) else destination
+        dest = AutoPath(destination) if not isinstance(destination, AutoPath) else destination
 
         if self.is_file():
             # Copy single file
@@ -904,7 +904,7 @@ class DataPath:
 
         return dest
 
-    def move_to(self, destination: Union[str, "DataPath", Path]) -> "DataPath":
+    def move_to(self, destination: Union[str, "AutoPath", Path]) -> "AutoPath":
         """Move file or directory to destination."""
         dest = self.copy_to(destination)
 
@@ -921,12 +921,12 @@ class DataPath:
 
         return dest
 
-    def upload_from(self, source: Union[str, Path, "DataPath"]) -> None:
+    def upload_from(self, source: Union[str, Path, "AutoPath"]) -> None:
         """Upload from local file/directory to this path."""
         if isinstance(source, str):
             source = Path(source)
-        elif isinstance(source, DataPath):
-            # If source is also a DataPath, use copy_to instead
+        elif isinstance(source, AutoPath):
+            # If source is also a AutoPath, use copy_to instead
             source.copy_to(self)
             return
 
@@ -1000,15 +1000,15 @@ class DataPath:
                 return self._path_str
 
     # Additional pathlib.Path compatibility methods
-    def with_name(self, name: str) -> "DataPath":
+    def with_name(self, name: str) -> "AutoPath":
         """Return a new path with the name changed."""
         return self.parent / name
 
-    def with_suffix(self, suffix: str) -> "DataPath":
+    def with_suffix(self, suffix: str) -> "AutoPath":
         """Return a new path with the suffix changed."""
         return self.parent / (self.stem + suffix)
 
-    def with_stem(self, stem: str) -> "DataPath":
+    def with_stem(self, stem: str) -> "AutoPath":
         """Return a new path with the stem changed."""
         return self.parent / (stem + self.suffix)
 
@@ -1029,7 +1029,7 @@ class DataPath:
             return True
         return Path(self._path_str).is_absolute()
 
-    def joinpath(self, *args) -> "DataPath":
+    def joinpath(self, *args) -> "AutoPath":
         """Join path components."""
         result = self
         for arg in args:
@@ -1042,32 +1042,32 @@ class DataPath:
             return Path(self._parsed.path).match(pattern)
         return Path(self._path_str).match(pattern)
 
-    def relative_to(self, other: Union[str, "DataPath", Path]) -> str:
+    def relative_to(self, other: Union[str, "AutoPath", Path]) -> str:
         """Return the relative path from other."""
-        if isinstance(other, DataPath):
+        if isinstance(other, AutoPath):
             other_path = other._path_str
         else:
             other_path = str(other)
 
-        if self._is_uri and DataPath(other_path)._is_uri:
+        if self._is_uri and AutoPath(other_path)._is_uri:
             # Both are URIs - compare path components
             self_parsed = urlparse(self._path_str)
             other_parsed = urlparse(other_path)
             if self_parsed.netloc != other_parsed.netloc or self_parsed.scheme != other_parsed.scheme:
                 raise ValueError(f"'{self._path_str}' is not relative to '{other_path}'")
             return str(Path(self_parsed.path).relative_to(other_parsed.path))
-        elif not self._is_uri and not DataPath(other_path)._is_uri:
+        elif not self._is_uri and not AutoPath(other_path)._is_uri:
             # Both are local paths
             return str(Path(self._path_str).relative_to(other_path))
         else:
             raise ValueError("Cannot compute relative path between different path types")
 
-    def resolve(self) -> "DataPath":
+    def resolve(self) -> "AutoPath":
         """Make the path absolute, resolving symlinks."""
         if self._is_uri:
             return self  # URIs are already resolved
         resolved_path = Path(self._path_str).resolve()
-        return DataPath(str(resolved_path), self._store)
+        return AutoPath(str(resolved_path), self._store)
 
     # Deletion methods
     def delete(self) -> None:
@@ -1081,3 +1081,55 @@ class DataPath:
             self.rmdir()
         else:
             raise FileNotFoundError(f"Path not found: {self._path_str}")
+
+    def load(self, format: Optional[str] = None, ignore_cache: bool = False) -> Any:
+        """
+        Load data using AutoStore's handler system for format detection and conversion.
+
+        This method leverages AutoStore's handlers to automatically detect and parse
+        different data formats like parquet, CSV, JSON, etc., returning the appropriate
+        data structure (e.g., pandas DataFrame for parquet/CSV).
+
+        Args:
+            format: Optional format override (e.g., 'parquet', 'csv', 'json')
+            ignore_cache: If True, forces fresh download from source, bypassing cache
+
+        Returns:
+            The loaded data in appropriate format based on file type and handlers
+
+        Examples:
+            ```python
+            # Load parquet file as DataFrame
+            df = data_path.load()
+            # Force JSON parsing
+            json_data = data_path.load(format="json")
+            # Bypass cache
+            fresh_data = data_path.load(ignore_cache=True)
+            ```
+        """
+        rel_path = self._get_relative_path()
+        return self._store.read(rel_path, format=format, ignore_cache=ignore_cache)
+
+    def save(self, data: Any, format: Optional[str] = None) -> None:
+        """
+        Save data using AutoStore's handler system for format detection and conversion.
+
+        This method leverages AutoStore's handlers to automatically detect the appropriate
+        format based on the data type and file extension, then saves the data accordingly.
+
+        Args:
+            data: The data to save (DataFrame, dict, list, etc.)
+            format: Optional format override (e.g., 'parquet', 'csv', 'json')
+
+        Examples:
+            ```python
+            # Save DataFrame as parquet (auto-detected from extension)
+            data_path.save(df)
+            # Force CSV format
+            data_path.save(df, format="csv")
+            # Save dict as JSON
+            data_path.save({"key": "value"}, format="json")
+            ```
+        """
+        rel_path = self._get_relative_path()
+        self._store.write(rel_path, data, format=format)

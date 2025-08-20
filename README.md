@@ -1,19 +1,18 @@
-# AutoStore - File Storage Made Simple
+# AutoStore - File Storage With Automatic Backend Detection
 
-AutoStore provides a dictionary-like interface for reading and writing files with automatic backend detection and cross-cloud access.
+AutoStore provides a dictionary-like interface for reading and writing files from cloud storage and local filesystems.
 
 AutoStore eliminates the cognitive overhead of managing different file formats and storage backends, letting you focus on your data and analysis rather than the mechanics of file I/O. It automatically detects storage backends from URI prefixes (s3://, gcs://, etc.), handles file format detection, type inference, and provides a clean, intuitive API for data persistence across local and cloud storage.
 
-## Why Use AutoStore?
+## Features
 
--   **Zero Configuration**: No manual backend registration - automatically detects storage type from URI prefixes
--   **Multi-Service Support**: Use multiple S3-compatible services (AWS, Conductor, MinIO, etc.) with different configurations
--   **Cross-Backend Access**: Access any storage backend from a single store instance using URI syntax
--   **Dataset Support**: Automatically handles both individual files and multi-file datasets (parquet, CSV collections)
--   **Smart Caching**: Intelligent caching system with configurable expiration reduces redundant downloads
--   **Multiple Data Types**: Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more
--   **Type-Safe Options**: Dataclass-based configuration with IDE support and validation for each service
--   **Performance Optimized**: Upload/download operations with efficient handling of large files and datasets
+-   Automatically detects storage type from URI prefixes
+-   Use multiple S3-compatible services (AWS, Conductor, MinIO, etc.) with different configurations
+-   Access any storage backend from a single store instance using URI syntax
+-   Automatically handles both individual files and multi-file datasets (parquet, CSV collections)
+-   Caching system with configurable expiration reduces redundant downloads
+-   Built-in support for Polars DataFrames, JSON, CSV, images, PyTorch models, NumPy arrays, and more
+-   Configuration with IDE support and validation for each service
 
 ## Getting Started
 
@@ -162,6 +161,254 @@ single_file = store["weather/2024/january.parquet"]
 
 # List files in dataset
 files = list(store.list_files("weather/2024/*", recursive=True))
+```
+
+## AutoPath - Path-like Interface
+
+AutoPath provides a pathlib.Path-like interface for unified access to both local filesystem and cloud storage. It combines the familiar Path API with AutoStore's automatic backend detection and data handling capabilities.
+
+### Basic AutoPath Usage
+
+```python
+from autostore import AutoStore, AutoPath
+from autostore.s3 import S3Options
+
+# Create a store with multiple backends
+store = AutoStore(
+    "./local-data",
+    options=[
+        S3Options(
+            scheme="s3",
+            profile_name="aws-prod",
+            cache_enabled=True,
+            cache_expiry_hours=6
+        )
+    ]
+)
+
+# Create AutoPath instances
+local_path = AutoPath("./local-data/config.json", store=store)
+s3_path = AutoPath("s3://my-bucket/data/results.parquet", store=store)
+
+# Path operations work the same for local and cloud storage
+config_exists = local_path.exists()          # True/False
+results_exists = s3_path.exists()            # True/False
+
+# Read files as text or bytes
+config_text = local_path.read_text()         # Read as string
+results_bytes = s3_path.read_bytes()         # Read as bytes
+
+# Write files
+local_path.write_text('{"key": "value"}')    # Write string
+s3_path.write_bytes(b"binary data")          # Write bytes
+```
+
+### Path Manipulation and Navigation
+
+```python
+# Path joining works like pathlib.Path
+data_dir = AutoPath("s3://my-bucket/datasets", store=store)
+experiment_dir = data_dir / "experiment_1"
+results_file = experiment_dir / "results.parquet"
+
+print(results_file)  # s3://my-bucket/datasets/experiment_1/results.parquet
+
+# Path properties
+print(results_file.name)       # results.parquet
+print(results_file.stem)       # results
+print(results_file.suffix)     # .parquet
+print(results_file.parent)     # s3://my-bucket/datasets/experiment_1
+
+# Navigate parent directories
+parent = results_file.parent
+grandparent = parent.parent
+all_parents = results_file.parents  # List of all parent directories
+```
+
+### File and Directory Operations
+
+```python
+# File operations
+if results_file.exists():
+    print("File exists")
+
+if results_file.is_file():
+    print("It's a file")
+
+if data_dir.is_dir():
+    print("It's a directory")
+
+# Directory listing
+for item in data_dir.iterdir():
+    print(f"Found: {item}")
+    if item.is_file():
+        print(f"  File size: {item.stat().size}")
+
+# Glob patterns
+for parquet_file in data_dir.glob("**/*.parquet"):
+    print(f"Parquet file: {parquet_file}")
+
+for csv_file in experiment_dir.glob("*.csv"):
+    print(f"CSV file: {csv_file}")
+```
+
+### Directory Management
+
+```python
+# For local paths, this creates real directories
+local_dir = AutoPath("./data/analysis", store=store)
+local_dir.mkdir(parents=True, exist_ok=True)
+
+# Remove directories
+empty_dir = AutoPath("s3://my-bucket/empty-folder", store=store)
+empty_dir.rmdir()  # Remove empty directory
+
+# Delete files or directories with contents
+old_experiment = AutoPath("s3://my-bucket/old-experiment", store=store)
+old_experiment.delete()  # Recursively deletes all contents
+```
+
+### File Transfer Operations
+
+```python
+# Copy files between any backends
+local_file = AutoPath("./data/model.pt", store=store)
+s3_backup = AutoPath("s3://backup-bucket/models/model.pt", store=store)
+
+# Copy local file to S3
+local_file.copy_to(s3_backup)
+
+# Move files
+temp_file = AutoPath("./temp/processing.csv", store=store)
+final_location = AutoPath("s3://data-bucket/processed/final.csv", store=store)
+temp_file.move_to(final_location)
+
+# Upload from local filesystem
+local_source = "./analysis/results.xlsx"
+s3_destination = AutoPath("s3://reports/analysis/results.xlsx", store=store)
+s3_destination.upload_from(local_source)
+
+# Download to local filesystem
+s3_source = AutoPath("s3://data/large_dataset.parquet", store=store)
+local_destination = "./downloads/dataset.parquet"
+s3_source.download_to(local_destination)
+```
+
+### Data Loading with Automatic Format Detection
+
+AutoPath integrates with AutoStore's handler system to load data in the appropriate format based on file extensions or content type. It supports Polars DataFrames, JSON, CSV, and more.
+
+```python
+# Load data with automatic format detection
+parquet_path = AutoPath("s3://data/sales.parquet", store=store)
+df = parquet_path.load()  # Returns Polars DataFrame
+
+json_path = AutoPath("s3://config/settings.json", store=store)
+settings = json_path.load()  # Returns dict
+
+# Force specific format
+csv_as_parquet = AutoPath("s3://data/data.csv", store=store)
+df = csv_as_parquet.load(format="parquet")  # Force parquet parsing
+
+# Bypass cache
+fresh_data = parquet_path.load(ignore_cache=True)
+
+# Save data with automatic format detection
+results = {"accuracy": 0.95, "model": "transformer"}
+results_path = AutoPath("s3://experiments/run_001/results.json", store=store)
+results_path.save(results)  # Automatically saves as JSON
+
+# Save DataFrame
+import polars as pl
+df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+data_path = AutoPath("s3://datasets/processed.parquet", store=store)
+data_path.save(df)  # Automatically saves as Parquet
+```
+
+### AutoPath without Explicit Store
+
+AutoPath can automatically create appropriate stores:
+
+```python
+# For local paths
+local_path = AutoPath("./data/file.json")  # Creates local store automatically
+
+# For S3 URIs
+s3_path = AutoPath("s3://bucket/file.json")  # Creates S3 store with default options
+
+# Path operations work the same
+data = s3_path.load()
+s3_path.save({"new": "data"})
+```
+
+### Advanced Path Operations
+
+```python
+# Path pattern matching
+log_path = AutoPath("s3://logs/app.2024-01-15.log", store=store)
+if log_path.match("*.log"):
+    print("It's a log file")
+
+# Relative paths
+base_path = AutoPath("s3://data/experiments", store=store)
+result_path = AutoPath("s3://data/experiments/run_1/results.json", store=store)
+relative = result_path.relative_to(base_path)  # "run_1/results.json"
+
+# Path transformations
+config_path = AutoPath("s3://app/config.yaml", store=store)
+backup_path = config_path.with_suffix(".yaml.bak")    # config.yaml.bak
+renamed_path = config_path.with_name("new_config.yaml")  # new_config.yaml
+stemmed_path = config_path.with_stem("production")       # production.yaml
+
+# Absolute and URI representations
+print(local_path.as_posix())   # Forward slashes
+print(local_path.as_uri())     # file:// URI
+print(s3_path.as_uri())        # s3:// URI
+print(s3_path.is_absolute())   # True for URIs
+```
+
+### Integration Example
+
+```python
+from autostore import AutoStore, AutoPath
+from autostore.s3 import S3Options
+import polars as pl
+
+# Setup store with caching
+store = AutoStore(
+    "./cache",
+    options=[S3Options(
+        scheme="s3",
+        profile_name="production",
+        cache_enabled=True,
+        cache_expiry_hours=0  # Never expire
+    )]
+)
+
+# Define paths
+raw_data = AutoPath("s3://raw-data/sales/2024/", store=store)
+processed_data = AutoPath("s3://processed/sales_summary.parquet", store=store)
+local_backup = AutoPath("./backups/sales_summary.parquet", store=store)
+
+# Process data using path-like interface
+if raw_data.is_dir():
+    # Load all files in directory as dataset
+    df = raw_data.load()  # Loads entire directory as LazyFrame
+
+    # Process data
+    summary = df.group_by("region").agg([
+        pl.col("sales").sum().alias("total_sales"),
+        pl.col("sales").count().alias("transaction_count")
+    ])
+
+    # Save processed data
+    processed_data.save(summary.collect())
+
+    # Create local backup
+    processed_data.copy_to(local_backup)
+
+    print(f"Processed {summary.height} regions")
+    print(f"Backup created at: {local_backup}")
 ```
 
 ## Supported Data Types
@@ -396,45 +643,6 @@ with AutoStore("./data", config=config) as store:
 # Temporary files are automatically cleaned up here
 ```
 
-## Migration from v0.1.x
-
-If you're upgrading from an earlier version, here are the key changes:
-
-### Before (v0.1.x)
-
-```python
-from autostore import AutoStore
-from autostore.s3 import S3Backend, S3StorageConfig
-
-# Manual backend registration required
-AutoStore.register_backend("s3", S3Backend)
-
-# Separate config objects
-config = S3StorageConfig(region_name="us-east-1")
-store = AutoStore("s3://bucket/", config=config)
-```
-
-### After (v2.0+)
-
-```python
-from autostore import AutoStore, S3Options
-
-# Automatic backend detection - no registration needed
-store = AutoStore("s3://bucket/", region_name="us-east-1")
-
-# Or with options object
-options = S3Options(region_name="us-east-1")
-store = AutoStore("s3://bucket/", options=options)
-```
-
-### Key Changes
-
--   ✅ No backend registration - automatic detection from URI prefixes
--   ✅ Unified Options system - consistent configuration across backends
--   ✅ Cross-backend access - access any backend from any store instance
--   ✅ Dataset support - automatic handling of multi-file datasets
--   ✅ Enhanced error handling - clear dependency and configuration messages
-
 ## Performance Considerations
 
 ### Large File Handling
@@ -467,9 +675,10 @@ Don't choose AutoStore when:
 
 ## Changes
 
--   0.1.13 - Added DataPath class for path-like operations with automatic backend detection
-    -   DataPath supports all storage operations like read, write, upload, download, delete, etc.
-    -   DataPath can be used in place of AutoStore for path-like interactions
+-   0.1.14 - AutoPath now has a load and save method that uses the built-in handlers
+-   0.1.13 - Added AutoPath class for path-like operations with automatic backend detection
+    -   AutoPath supports all storage operations like read, write, upload, download, delete, etc.
+    -   AutoPath can be used in place of AutoStore for path-like interactions
 -   0.1.8 - Auto scheme registration enhancement
 -   0.1.7 - Cache expiry can be set to 0 to never expire cache entries.
 -   0.1.6 - Scheme-based backend detection and Options system with automatic backend detection from URI schemes
