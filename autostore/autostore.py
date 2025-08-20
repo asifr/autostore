@@ -1,4 +1,5 @@
 import json
+import zipfile
 import logging
 import tempfile
 from pathlib import Path
@@ -1210,3 +1211,161 @@ class AutoPath:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - automatically close and save."""
         self.close()
+
+    def savez(self, *args, compress: bool = True, **kwargs) -> None:
+        """
+        Save multiple data objects to a zip archive, similar to numpy's savez_compressed.
+
+        This method creates a zip file containing multiple data objects, each saved in their
+        appropriate format based on the data type and AutoStore's handler system.
+
+        Args:
+            *args: Positional arguments - data objects to save (will be named 'data_0', 'data_1', etc.)
+            compress: Whether to use compression (default True)
+            **kwargs: Keyword arguments - data objects with custom names
+
+        Examples:
+            # Save multiple arrays like numpy's savez_compressed
+            matrix_path.savez(matrix.data, indices=matrix.indices, shape=matrix.shape)
+
+            # Save mixed data types
+            results_path.savez(
+                dataframe,
+                model_params={"lr": 0.01, "epochs": 100},
+                metrics=[0.95, 0.87, 0.92],
+                compress=True
+            )
+
+            # Save with custom names
+            analysis_path.savez(
+                raw_data=df,
+                processed_data=processed_df,
+                summary_stats=stats_dict
+            )
+        """
+        # Ensure the path ends with .zip
+        if not self._path_str.endswith(".zip"):
+            save_path = self._path_str + ".zip"
+        else:
+            save_path = self._path_str
+
+        # Create name dictionary similar to numpy's approach
+        namedict = kwargs.copy()
+        for i, val in enumerate(args):
+            key = f"data_{i}"
+            if key in namedict:
+                raise ValueError(f"Cannot use un-named variables and keyword {key}")
+            namedict[key] = val
+
+        if not namedict:
+            raise ValueError("At least one data object must be provided")
+
+        # Determine compression
+        compression = zipfile.ZIP_DEFLATED if compress else zipfile.ZIP_STORED
+
+        # Create temporary directory for staging files
+        with tempfile.TemporaryDirectory(prefix="autostore_zip_") as temp_dir:
+            temp_path = Path(temp_dir)
+            zip_path = temp_path / "archive.zip"
+
+            # Create zip file
+            with zipfile.ZipFile(zip_path, "w", compression=compression, allowZip64=True) as zipf:
+                for key, data in namedict.items():
+                    # Determine the best format for this data type
+                    handler = self._store.handler_registry.get_handler_for_data(data)
+                    if not handler:
+                        # Fallback to pickle for unknown data types
+                        file_extension = ".pkl"
+                        handler = self._store.handler_registry.get_handler_for_extension(".pkl")
+                    else:
+                        # Use the first extension supported by the handler
+                        file_extension = handler.extensions[0]
+
+                    # Create temporary file for this data object
+                    temp_file_path = temp_path / f"{key}{file_extension}"
+
+                    # Write data using the appropriate handler
+                    handler.write_to_file(data, temp_file_path, file_extension)
+
+                    # Add to zip with the original key name + extension
+                    zipf.write(temp_file_path, f"{key}{file_extension}")
+
+            # Upload the zip file using the backend's upload method
+            backend = self._get_backend()
+            if save_path != self._path_str:
+                # Need to create new AutoPath for the .zip extension
+                rel_path = AutoPath(save_path, self._store)._get_relative_path()
+            else:
+                rel_path = self._get_relative_path()
+            backend.upload(zip_path, rel_path)
+
+    def loadz(self) -> dict:
+        """
+        Load data from a zip archive created by savez.
+
+        Returns a dictionary where keys are the original names (without extensions)
+        and values are the loaded data objects in their original formats.
+
+        Returns:
+            dict: Dictionary mapping names to loaded data objects
+
+        Examples:
+            # Load zip file
+            data = matrix_path.loadz()
+            matrix_data = data['data_0']
+            indices = data['indices']
+            shape = data['shape']
+
+            # Access with known names
+            results = results_path.loadz()
+            df = results['raw_data']
+            params = results['model_params']
+        """
+        # Ensure we're reading a zip file
+        if not self._path_str.endswith(".zip"):
+            # Create AutoPath for the .zip version
+            zip_autopath = AutoPath(self._path_str + ".zip", self._store)
+        else:
+            zip_autopath = self
+
+        if not zip_autopath.exists():
+            raise FileNotFoundError(f"Zip file not found: {zip_autopath._path_str}")
+
+        # Download zip file to temporary location using backend
+        backend = zip_autopath._get_backend()
+        rel_path = zip_autopath._get_relative_path()
+
+        # Extract and load data
+        result = {}
+        with tempfile.TemporaryDirectory(prefix="autostore_unzip_") as temp_dir:
+            temp_path = Path(temp_dir)
+            zip_file_path = temp_path / "archive.zip"
+
+            # Download the zip file using backend's download method
+            downloaded_path = backend.download_with_cache(rel_path)
+            # Copy to our temp location for processing
+            import shutil
+
+            shutil.copy2(downloaded_path, zip_file_path)
+
+            with zipfile.ZipFile(zip_file_path, "r") as zipf:
+                for file_info in zipf.infolist():
+                    # Extract file
+                    extracted_path = temp_path / file_info.filename
+                    with zipf.open(file_info) as source, open(extracted_path, "wb") as target:
+                        target.write(source.read())
+
+                    # Determine the key name (remove extension)
+                    file_path = Path(file_info.filename)
+                    key = file_path.stem
+                    file_extension = file_path.suffix
+
+                    # Get appropriate handler and load data
+                    handler = self._store.handler_registry.get_handler_for_extension(file_extension)
+                    if handler:
+                        result[key] = handler.read_from_file(extracted_path, file_extension)
+                    else:
+                        # Fallback: try to read as bytes
+                        result[key] = extracted_path.read_bytes()
+
+        return result
